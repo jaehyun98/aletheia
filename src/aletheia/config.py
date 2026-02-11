@@ -1,9 +1,18 @@
 """Configuration management for Aletheia."""
 
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Environment variable mappings: env var name -> config dot-notation path
+_ENV_OVERRIDES = {
+    "OLLAMA_BASE_URL": "ollama.base_url",
+    "OLLAMA_MODEL": "ollama.model",
+    "WHISPER_MODEL": "whisper.model",
+    "WHISPER_DEVICE": "whisper.device",
+}
 
 
 def _find_config_path() -> Path:
@@ -34,12 +43,24 @@ class Config:
         self._load()
 
     def _load(self) -> None:
-        """Load configuration from YAML file."""
+        """Load configuration from YAML file, then apply environment variable overrides."""
         if self.config_path.exists():
             with open(self.config_path, encoding="utf-8") as f:
                 self._config = yaml.safe_load(f) or {}
         else:
             self._config = self._default_config()
+        self._apply_env_overrides()
+
+    def _apply_env_overrides(self) -> None:
+        """Override config values with environment variables when set."""
+        for env_var, dot_path in _ENV_OVERRIDES.items():
+            value = os.environ.get(env_var)
+            if value is not None:
+                keys = dot_path.split(".")
+                target = self._config
+                for key in keys[:-1]:
+                    target = target.setdefault(key, {})
+                target[keys[-1]] = value
 
     def _default_config(self) -> dict[str, Any]:
         """Return default configuration."""
@@ -49,7 +70,7 @@ class Config:
                 "device": "auto",
             },
             "ollama": {
-                "model": "qwen2.5:7b",
+                "model": "exaone3.5:7.8b",
                 "base_url": "http://localhost:11434",
             },
             "filter": {

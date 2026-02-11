@@ -25,5 +25,22 @@ dependencies = [
 aletheia = "aletheia.main:main"
 aletheia-gui = "aletheia.gui:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/aletheia"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

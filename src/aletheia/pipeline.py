@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
 
-from .config import Config, get_config
+from .config import get_config
 from .filter import ContentFilter
 from .style import StyleTransformer
 from .transcribe import Transcriber

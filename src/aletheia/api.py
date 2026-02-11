@@ -10,8 +10,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .config import get_config, reset_config, CONFIG_PATH
-from .pipeline import PipelineResult, AletheiaPipeline
+from .config import CONFIG_PATH, get_config, reset_config
+from .pipeline import AletheiaPipeline
 
 app = FastAPI(
     title="Aletheia API",

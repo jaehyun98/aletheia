@@ -13,7 +13,7 @@ class StyleTransformer:
     def __init__(self):
         config = get_config()
         ollama_config = config.ollama
-        self.model = ollama_config.get("model", "qwen2.5:7b")
+        self.model = ollama_config.get("model", "exaone3.5:7.8b")
         self.base_url = ollama_config.get("base_url", "http://localhost:11434")
 
         # Load persona presets

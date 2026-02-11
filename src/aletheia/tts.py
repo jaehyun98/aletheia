@@ -111,9 +111,9 @@ class TextToSpeech:
 
     def _play_audio(self, file_path: str) -> None:
         """Play audio file using available player."""
-        import subprocess
-        import shutil
         import os
+        import shutil
+        import subprocess
 
         # Try different audio players
         players = [

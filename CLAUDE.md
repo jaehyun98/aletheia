@@ -6,7 +6,7 @@ Voice/Text Style Transformation Pipeline with STT, filtering, and style transfor
 
 - Python 3.10+, hatchling build system
 - STT: faster-whisper
-- LLM: Ollama (default: qwen2.5:7b)
+- LLM: Ollama (default: exaone3.5:7.8b)
 - TTS: Edge TTS
 - API: FastAPI + Uvicorn
 - GUI: Gradio

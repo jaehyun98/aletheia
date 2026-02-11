@@ -4,7 +4,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import get_config
 from .pipeline import AletheiaPipeline
 
 
@@ -106,8 +105,8 @@ Persona examples:
         for key, name in personas.items():
             marker = " (default)" if key == default_key else ""
             print(f"  {key:15} - {name}{marker}")
-        print(f"\nUsage: aletheia -p <preset_name>")
-        print(f"       aletheia -p \"custom persona prompt\"")
+        print("\nUsage: aletheia -p <preset_name>")
+        print("       aletheia -p \"custom persona prompt\"")
         sys.exit(0)
 
     # Determine output settings

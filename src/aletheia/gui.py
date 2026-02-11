@@ -1,14 +1,12 @@
 """Gradio web GUI for Aletheia."""
 
 import tempfile
-from pathlib import Path
 
 import gradio as gr
 import yaml
 
-from .config import get_config, CONFIG_PATH
+from .config import CONFIG_PATH, get_config
 from .pipeline import AletheiaPipeline
-
 
 # Global pipeline instance
 pipeline: AletheiaPipeline | None = None
@@ -257,6 +255,7 @@ def set_ollama_model(model: str) -> str:
 
 # Popular models for easy selection
 POPULAR_MODELS = [
+    ("exaone3.5:7.8b", "EXAONE 3.5 7.8B - Best for Korean (default)"),
     ("llama3.2:3b", "Llama 3.2 3B - Fast and light"),
     ("llama3.2:1b", "Llama 3.2 1B - Lightest"),
     ("qwen2.5:7b", "Qwen 2.5 7B - Good for Korean"),
@@ -593,7 +592,10 @@ def create_ui() -> gr.Blocks:
         delete_btn.click(
             on_delete_and_refresh,
             inputs=[edit_key],
-            outputs=[edit_status, persona_table, edit_key_dropdown, persona_dropdown, edit_key, edit_name, edit_prompt, edit_default],
+            outputs=[
+                edit_status, persona_table, edit_key_dropdown, persona_dropdown,
+                edit_key, edit_name, edit_prompt, edit_default,
+            ],
         )
 
         def clear_form():
