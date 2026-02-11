@@ -2,7 +2,7 @@ whisper:
   model: base
   device: auto
 ollama:
-  model: qwen2.5:7b
+  model: exaone3.5:7.8b
   base_url: http://localhost:11434
 filter:
   enabled: true
