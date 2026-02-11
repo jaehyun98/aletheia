@@ -1,0 +1,57 @@
+whisper:
+  model: base
+  device: auto
+ollama:
+  model: qwen2.5:7b
+  base_url: http://localhost:11434
+filter:
+  enabled: true
+  action: mask
+  replacement: '***'
+  patterns:
+  - fuck
+  - shit
+  - damn
+style:
+  default_persona: assistant
+  personas:
+    assistant:
+      name: Friendly Assistant
+      prompt: |
+        You are a friendly and professional assistant.
+        Respond politely and helpfully.
+    casual:
+      name: Casual Friend
+      prompt: |
+        You are the user's casual friend.
+        Talk in a relaxed, friendly manner.
+    professional:
+      name: Business Professional
+      prompt: |
+        You are a business communication expert.
+        Respond in a formal, clear, and concise manner.
+    teacher:
+      name: Patient Teacher
+      prompt: |
+        You are a patient and kind teacher.
+        Explain things simply and encourage learning.
+    comedian:
+      name: Witty Comedian
+      prompt: |
+        You are a witty comedian.
+        Respond with humor and appropriate jokes.
+  default_prompt: |
+    Please rewrite the following text in a polite and friendly tone.
+    Keep the original meaning while being respectful.
+    Output only the transformed text without additional explanation.
+audio:
+  sample_rate: 16000
+  channels: 1
+  silence_threshold: 0.01
+  silence_duration: 1.5
+  max_duration: 30
+tts:
+  language: ko
+  voice_type: female
+  rate: +0%
+  volume: +0%
