@@ -2,7 +2,7 @@ whisper:
   model: base
   device: auto
 ollama:
-  model: exaone3.5:7.8b
+  model: exaone3.5:32b
   base_url: http://localhost:11434
 filter:
   enabled: true
@@ -17,33 +17,46 @@ style:
   personas:
     assistant:
       name: Friendly Assistant
-      prompt: |
-        You are a friendly and professional assistant.
+      prompt: 'You are a friendly and professional assistant.
+
         Respond politely and helpfully.
+
+        '
     casual:
       name: Casual Friend
-      prompt: |
-        You are the user's casual friend.
+      prompt: 'You are the user''s casual friend.
+
         Talk in a relaxed, friendly manner.
+
+        '
     professional:
       name: Business Professional
-      prompt: |
-        You are a business communication expert.
+      prompt: 'You are a business communication expert.
+
         Respond in a formal, clear, and concise manner.
+
+        '
     teacher:
       name: Patient Teacher
-      prompt: |
-        You are a patient and kind teacher.
+      prompt: 'You are a patient and kind teacher.
+
         Explain things simply and encourage learning.
+
+        '
     comedian:
       name: Witty Comedian
-      prompt: |
-        You are a witty comedian.
+      prompt: 'You are a witty comedian.
+
         Respond with humor and appropriate jokes.
-  default_prompt: |
-    Please rewrite the following text in a polite and friendly tone.
+
+        '
+  default_prompt: 'Please rewrite the following text in a polite and friendly tone.
+
     Keep the original meaning while being respectful.
+
     Output only the transformed text without additional explanation.
+
+    '
 audio:
   sample_rate: 16000
   channels: 1
