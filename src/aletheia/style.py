@@ -100,6 +100,15 @@ class StyleTransformer:
         if active_persona and active_persona.strip():
             messages.append({"role": "system", "content": active_persona.strip()})
 
+        # Add few-shot examples if available
+        persona_key = persona or self.default_persona_key
+        if persona_key and persona_key in self.personas:
+            examples = self.personas[persona_key].get("examples", [])
+            for ex in examples:
+                if "input" in ex and "output" in ex:
+                    messages.append({"role": "user", "content": ex["input"]})
+                    messages.append({"role": "assistant", "content": ex["output"]})
+
         # Add user message
         # If persona is set but no custom style prompt, use a simpler instruction
         if active_persona and not style_prompt:

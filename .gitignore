@@ -74,3 +74,6 @@ Thumbs.db
 *.mp3
 *.wav
 *.audio
+
+# Gradio
+.gradio/
