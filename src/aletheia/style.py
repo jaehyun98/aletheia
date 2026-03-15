@@ -30,6 +30,7 @@ class StyleTransformer:
             "default_prompt",
             "다음 텍스트를 정중하고 친절한 톤으로 다시 작성해주세요.",
         )
+        self.no_think = ollama_config.get("no_think", False)
         self._client: ollama.Client | None = None
 
     def get_persona(self, persona_key: str | None = None) -> str:
@@ -117,6 +118,8 @@ class StyleTransformer:
             prompt = style_prompt or self.default_prompt
 
         full_prompt = f"{prompt}\n\n원본 텍스트: {text}"
+        if self.no_think:
+            full_prompt += " /no_think"
         messages.append({"role": "user", "content": full_prompt})
 
         return messages

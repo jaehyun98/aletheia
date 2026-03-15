@@ -111,11 +111,37 @@ class TextToSpeech:
 
     def _play_audio(self, file_path: str) -> None:
         """Play audio file using available player."""
+        import platform
         import subprocess
         import shutil
-        import os
 
-        # Try different audio players
+        system = platform.system()
+
+        # Windows native
+        if system == "Windows":
+            try:
+                import winsound
+                # winsound only supports .wav; for .mp3 use start command
+                if file_path.lower().endswith(".wav"):
+                    winsound.PlaySound(file_path, winsound.SND_FILENAME)
+                    return
+            except Exception:
+                pass
+            # Fallback: open with default media player
+            try:
+                subprocess.run(
+                    ["cmd", "/c", "start", "/wait", "", file_path],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return
+            except Exception:
+                pass
+            print(f"Warning: Could not play audio. File saved to {file_path}")
+            return
+
+        # Linux / macOS
         players = [
             ["mpv", "--no-video", file_path],
             ["ffplay", "-nodisp", "-autoexit", file_path],
@@ -137,45 +163,21 @@ class TextToSpeech:
                     continue
 
         # WSL: Try using Windows to play audio
-        if os.path.exists("/proc/version"):
+        try:
             with open("/proc/version") as f:
                 if "microsoft" in f.read().lower():
-                    try:
-                        # Convert WSL path to Windows path
-                        result = subprocess.run(
-                            ["wslpath", "-w", file_path],
-                            capture_output=True,
-                            text=True,
-                        )
-                        win_path = result.stdout.strip()
-
-                        # Use PowerShell with MediaPlayer for MP3 support
-                        ps_script = f'''
-                        Add-Type -AssemblyName presentationCore
-                        $player = New-Object System.Windows.Media.MediaPlayer
-                        $player.Open('{win_path}')
-                        $player.Play()
-                        Start-Sleep -Milliseconds 500
-                        while ($player.NaturalDuration.HasTimeSpan -eq $false) {{ Start-Sleep -Milliseconds 100 }}
-                        $duration = $player.NaturalDuration.TimeSpan.TotalMilliseconds
-                        Start-Sleep -Milliseconds ($duration - 500)
-                        $player.Close()
-                        '''
-                        subprocess.run(
-                            ["powershell.exe", "-c", ps_script],
-                            capture_output=True,
-                        )
-                        return
-                    except Exception:
-                        # Try opening with default Windows app
-                        try:
-                            subprocess.run(
-                                ["cmd.exe", "/c", "start", "/wait", "", win_path],
-                                capture_output=True,
-                            )
-                            return
-                        except Exception:
-                            pass
+                    result = subprocess.run(
+                        ["wslpath", "-w", file_path],
+                        capture_output=True, text=True,
+                    )
+                    win_path = result.stdout.strip()
+                    subprocess.run(
+                        ["cmd.exe", "/c", "start", "/wait", "", win_path],
+                        capture_output=True,
+                    )
+                    return
+        except (FileNotFoundError, OSError):
+            pass
 
         print(f"Warning: No audio player found. Audio saved to {file_path}")
 

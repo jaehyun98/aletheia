@@ -71,9 +71,12 @@ venv.bak/
 Thumbs.db
 
 # Project specific
+config.yaml
 *.mp3
 *.wav
 *.audio
+input/
+output/
 
 # Gradio
 .gradio/

@@ -1,6 +1,7 @@
 """CLI entry point for Aletheia."""
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -21,6 +22,10 @@ Examples:
   aletheia -i text -o text      # Text input -> Text output
   aletheia -i audio -o both     # Audio input -> Text + Audio output
   aletheia --check              # Check service status
+
+Watch mode (TouchDesigner integration):
+  aletheia --watch                           # Use config.yaml defaults
+  aletheia --watch --input-dir ./in --output-dir ./out
 
 Persona examples:
   aletheia --list-personas              # List available presets
@@ -71,6 +76,22 @@ Persona examples:
     parser.add_argument(
         "--loop", "-l", action="store_true", help="Continuous mode"
     )
+    parser.add_argument(
+        "--watch", action="store_true",
+        help="Watch mode: monitor input folder for WAV files and process sequentially"
+    )
+    parser.add_argument(
+        "--input-dir", type=str,
+        help="Input directory for watch mode (default: from config.yaml)"
+    )
+    parser.add_argument(
+        "--output-dir", type=str,
+        help="Output directory for watch mode (default: from config.yaml)"
+    )
+    parser.add_argument(
+        "--poll-interval", type=float,
+        help="Polling interval in seconds for watch mode (default: from config.yaml)"
+    )
 
     args = parser.parse_args()
 
@@ -108,6 +129,36 @@ Persona examples:
             print(f"  {key:15} - {name}{marker}")
         print(f"\nUsage: aletheia -p <preset_name>")
         print(f"       aletheia -p \"custom persona prompt\"")
+        sys.exit(0)
+
+    # Watch mode
+    if args.watch:
+        from .watch import FolderWatcher
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+        cfg = get_config()
+
+        input_dir = Path(args.input_dir or cfg.get("watch.input_dir", "./input"))
+        output_dir = Path(args.output_dir or cfg.get("watch.output_dir", "./output"))
+        poll_interval = args.poll_interval or cfg.get("watch.poll_interval", 0.5)
+
+        watcher = FolderWatcher(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            pipeline=pipeline,
+            poll_interval=poll_interval,
+            style_prompt=args.style,
+            persona=args.persona,
+            skip_filter=args.no_filter,
+            skip_transform=args.no_transform,
+        )
+        watcher.start()
+        watcher.run_forever()
         sys.exit(0)
 
     # Determine output settings

@@ -7,11 +7,24 @@ import yaml
 
 
 def _find_config_path() -> Path:
-    """Find the config file path."""
+    """Find the config file path, creating from template if needed."""
     cwd_config = Path.cwd() / "config.yaml"
     if cwd_config.exists():
         return cwd_config
-    return Path(__file__).parent.parent.parent / "config.yaml"
+
+    pkg_root = Path(__file__).parent.parent.parent
+    pkg_config = pkg_root / "config.yaml"
+    if pkg_config.exists():
+        return pkg_config
+
+    # Auto-create from template on first run
+    example = pkg_root / "config.example.yaml"
+    if example.exists():
+        import shutil
+        shutil.copy2(example, pkg_config)
+        return pkg_config
+
+    return pkg_config
 
 
 CONFIG_PATH = _find_config_path()

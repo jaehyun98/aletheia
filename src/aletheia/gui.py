@@ -1,6 +1,8 @@
 """Gradio web GUI for Aletheia."""
 
+import logging
 import tempfile
+import time
 from pathlib import Path
 
 import gradio as gr
@@ -8,10 +10,16 @@ import yaml
 
 from .config import get_config, CONFIG_PATH
 from .pipeline import AletheiaPipeline
+from .watch import FolderWatcher
 
+logger = logging.getLogger(__name__)
 
 # Global pipeline instance
 pipeline: AletheiaPipeline | None = None
+
+# Global watcher instance for GUI control
+_watcher: FolderWatcher | None = None
+_watcher_log_since: float = 0.0
 
 
 def get_pipeline() -> AletheiaPipeline:
@@ -269,6 +277,49 @@ POPULAR_MODELS = [
 ]
 
 
+def load_watch_config() -> tuple[str, str, float]:
+    """Load watch mode settings from config."""
+    config = load_config()
+    watch = config.get("watch", {})
+    return (
+        watch.get("input_dir", "./input"),
+        watch.get("output_dir", "./output"),
+        watch.get("poll_interval", 0.5),
+    )
+
+
+def save_watch_config(input_dir: str, output_dir: str, poll_interval: float) -> str:
+    """Save watch mode settings to config."""
+    if not input_dir.strip():
+        return "[Error] Input directory is required"
+    if not output_dir.strip():
+        return "[Error] Output directory is required"
+
+    config = load_config()
+    config["watch"] = {
+        "input_dir": input_dir.strip(),
+        "output_dir": output_dir.strip(),
+        "poll_interval": float(poll_interval),
+    }
+    save_config(config)
+    return f"[OK] Watch paths saved (input: {input_dir.strip()}, output: {output_dir.strip()})"
+
+
+def toggle_no_think(enabled: bool) -> str:
+    """Toggle no_think option and save to config."""
+    config = load_config()
+    if "ollama" not in config:
+        config["ollama"] = {}
+    config["ollama"]["no_think"] = enabled
+    save_config(config)
+
+    p = get_pipeline()
+    p.style_transformer.no_think = enabled
+
+    state = "ON" if enabled else "OFF"
+    return f"[OK] no_think: {state}"
+
+
 def pull_ollama_model(model_name: str, progress=gr.Progress()) -> str:
     """Pull/download an Ollama model."""
     import ollama
@@ -316,6 +367,75 @@ def delete_ollama_model(model_name: str) -> tuple[str, list]:
         return f"[OK] '{model_name}' deleted", get_ollama_models()
     except Exception as e:
         return f"[Error] Delete failed: {str(e)}", get_ollama_models()
+
+
+def start_watch(input_dir: str, output_dir: str, poll_interval: float, persona: str) -> tuple[str, str]:
+    """Start the folder watcher from GUI."""
+    global _watcher, _watcher_log_since
+
+    if _watcher is not None and _watcher.is_running:
+        return "Running", "[Already running]"
+
+    p = get_pipeline()
+    _watcher_log_since = time.time()
+
+    _watcher = FolderWatcher(
+        input_dir=Path(input_dir),
+        output_dir=Path(output_dir),
+        pipeline=p,
+        poll_interval=float(poll_interval),
+        persona=persona if persona and persona != "custom" else None,
+    )
+    _watcher.start()
+    return "Running", "[OK] Watch mode started"
+
+
+def stop_watch() -> tuple[str, str]:
+    """Stop the folder watcher from GUI."""
+    global _watcher
+
+    if _watcher is None or not _watcher.is_running:
+        return "Stopped", "[Already stopped]"
+
+    _watcher.stop()
+    return "Stopped", "[OK] Watch mode stopped"
+
+
+def poll_watch_logs() -> tuple[str, str, gr.update]:
+    """Poll watcher logs for the Timer callback."""
+    global _watcher_log_since
+
+    if _watcher is None or not _watcher.is_running:
+        status = "Stopped"
+        active = False
+    else:
+        status = "Running"
+        active = True
+
+    logs = _watcher.get_logs(since=_watcher_log_since) if _watcher else []
+    if logs:
+        _watcher_log_since = time.time()
+    log_text = "\n".join(logs) if logs else ""
+
+    return status, log_text, gr.update(active=active)
+
+
+def list_subdirs(path: str) -> list[str]:
+    """List subdirectory names at the given path."""
+    try:
+        p = Path(path.strip()) if path and path.strip() else Path("/mnt")
+        if not p.exists() or not p.is_dir():
+            return []
+        result = []
+        for d in p.iterdir():
+            try:
+                if d.is_dir() and not d.name.startswith('.'):
+                    result.append(d.name)
+            except (PermissionError, OSError):
+                continue
+        return sorted(result)
+    except (PermissionError, OSError):
+        return []
 
 
 def create_ui() -> gr.Blocks:
@@ -484,6 +604,19 @@ def create_ui() -> gr.Blocks:
                         )
 
                         gr.Markdown("---")
+                        gr.Markdown("### Inference Options")
+
+                        no_think_checkbox = gr.Checkbox(
+                            label="no_think",
+                            value=load_config().get("ollama", {}).get("no_think", False),
+                            info="Disable model thinking (for Qwen etc.)",
+                        )
+                        no_think_status = gr.Textbox(
+                            label="Status",
+                            interactive=False,
+                        )
+
+                        gr.Markdown("---")
                         gr.Markdown("### Delete Model")
 
                         model_delete_dropdown = gr.Dropdown(
@@ -529,6 +662,79 @@ def create_ui() -> gr.Blocks:
 - Korean recommended: `qwen2.5` series
 - See more at [Ollama Library](https://ollama.com/library)
                         """)
+
+                gr.Markdown("---")
+                gr.Markdown("### Watch Mode (TouchDesigner)")
+
+                watch_input_dir, watch_output_dir, watch_poll = load_watch_config()
+
+                with gr.Row():
+                    watch_input = gr.Textbox(
+                        label="Input Directory",
+                        value=watch_input_dir,
+                        placeholder="./input",
+                    )
+                    watch_output = gr.Textbox(
+                        label="Output Directory",
+                        value=watch_output_dir,
+                        placeholder="./output",
+                    )
+                    watch_poll_interval = gr.Number(
+                        label="Poll Interval (sec)",
+                        value=watch_poll,
+                        minimum=0.1,
+                        maximum=10.0,
+                        step=0.1,
+                    )
+
+                watch_persona = gr.Dropdown(
+                    choices=get_persona_choices(),
+                    value=get_pipeline().style_transformer.default_persona_key,
+                    label="Watch Persona",
+                    info="Persona to use in watch mode",
+                )
+
+                with gr.Row():
+                    watch_start_btn = gr.Button("Start", variant="primary")
+                    watch_stop_btn = gr.Button("Stop", variant="stop")
+                    watch_running_status = gr.Textbox(
+                        label="Status", value="Stopped", interactive=False,
+                    )
+
+                watch_log_viewer = gr.Textbox(
+                    label="Watch Log",
+                    interactive=False,
+                    lines=10,
+                    max_lines=20,
+                )
+
+                watch_timer = gr.Timer(1.0, active=False)
+
+                with gr.Accordion("Browse Folders", open=False):
+                    browse_path = gr.Textbox(
+                        label="Current Path (Enter to jump)",
+                        value="/mnt",
+                        interactive=True,
+                    )
+                    browse_dirs = gr.Radio(
+                        label="Folders",
+                        choices=list_subdirs("/mnt"),
+                        interactive=True,
+                    )
+                    with gr.Row():
+                        browse_open_btn = gr.Button("Open")
+                        browse_up_btn = gr.Button("Up")
+                    with gr.Row():
+                        browse_set_input_btn = gr.Button(
+                            "Set as Input", variant="primary",
+                        )
+                        browse_set_output_btn = gr.Button(
+                            "Set as Output", variant="primary",
+                        )
+
+                with gr.Row():
+                    watch_save_btn = gr.Button("Save Watch Settings", variant="primary")
+                    watch_status = gr.Textbox(label="Status", interactive=False)
 
         # Event handlers
         def toggle_custom_persona(choice):
@@ -669,6 +875,102 @@ def create_ui() -> gr.Blocks:
             on_model_delete,
             inputs=[model_delete_dropdown],
             outputs=[model_delete_status, model_dropdown, model_delete_dropdown],
+        )
+
+        # no_think toggle handler
+        no_think_checkbox.change(
+            toggle_no_think,
+            inputs=[no_think_checkbox],
+            outputs=[no_think_status],
+        )
+
+        # Watch mode handlers
+        watch_save_btn.click(
+            save_watch_config,
+            inputs=[watch_input, watch_output, watch_poll_interval],
+            outputs=[watch_status],
+        )
+
+        def on_watch_start(input_dir, output_dir, poll_interval, persona):
+            status, msg = start_watch(input_dir, output_dir, poll_interval, persona)
+            return status, msg, gr.update(active=True)
+
+        watch_start_btn.click(
+            on_watch_start,
+            inputs=[watch_input, watch_output, watch_poll_interval, watch_persona],
+            outputs=[watch_running_status, watch_status, watch_timer],
+        )
+
+        def on_watch_stop():
+            status, msg = stop_watch()
+            return status, msg, gr.update(active=False)
+
+        watch_stop_btn.click(
+            on_watch_stop,
+            outputs=[watch_running_status, watch_status, watch_timer],
+        )
+
+        def on_watch_tick(current_log):
+            status, new_lines, timer_update = poll_watch_logs()
+            if new_lines:
+                updated = (current_log + "\n" + new_lines).strip() if current_log else new_lines
+            else:
+                updated = current_log or ""
+            return status, updated, timer_update
+
+        watch_timer.tick(
+            on_watch_tick,
+            inputs=[watch_log_viewer],
+            outputs=[watch_running_status, watch_log_viewer, watch_timer],
+        )
+
+        # Directory browse handlers (non-blocking with timer polling)
+        # Directory browser handlers
+        def browse_open(current_path, selected):
+            if not selected:
+                return current_path, gr.update()
+            new_path = str(Path(current_path) / selected)
+            if Path(new_path).is_dir():
+                return new_path, gr.update(choices=list_subdirs(new_path), value=None)
+            return current_path, gr.update()
+
+        browse_open_btn.click(
+            browse_open,
+            inputs=[browse_path, browse_dirs],
+            outputs=[browse_path, browse_dirs],
+        )
+
+        def browse_up(current_path):
+            parent = str(Path(current_path).parent)
+            return parent, gr.update(choices=list_subdirs(parent), value=None)
+
+        browse_up_btn.click(
+            browse_up,
+            inputs=[browse_path],
+            outputs=[browse_path, browse_dirs],
+        )
+
+        def browse_navigate(path):
+            p = Path(path.strip()) if path and path.strip() else Path("/mnt")
+            if p.is_dir():
+                return str(p), gr.update(choices=list_subdirs(str(p)), value=None)
+            return path, gr.update(choices=[])
+
+        browse_path.submit(
+            browse_navigate,
+            inputs=[browse_path],
+            outputs=[browse_path, browse_dirs],
+        )
+
+        browse_set_input_btn.click(
+            lambda p: (p, f"[OK] Input: {p}"),
+            inputs=[browse_path],
+            outputs=[watch_input, watch_status],
+        )
+        browse_set_output_btn.click(
+            lambda p: (p, f"[OK] Output: {p}"),
+            inputs=[browse_path],
+            outputs=[watch_output, watch_status],
         )
 
     return app

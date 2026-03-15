@@ -123,17 +123,42 @@ class AletheiaPipeline:
         Returns:
             PipelineResult with all processing stages
         """
-        if not AUDIO_AVAILABLE or load_audio_file is None:
-            raise RuntimeError("Audio support not available. Install PortAudio: sudo apt install portaudio19-dev")
-        audio_data = load_audio_file(str(file_path))
-        return self.process_audio(
-            audio_data,
-            style_prompt=style_prompt,
-            persona=persona,
-            skip_filter=skip_filter,
-            skip_transform=skip_transform,
-            speak=speak,
+        file_path = Path(file_path)
+
+        # Step 1: Transcribe directly from file (avoids temp-file roundtrip)
+        original_text = self.transcriber.transcribe_file(file_path)
+        print(f"Transcribed: {original_text}")
+
+        # Step 2: Filter
+        if skip_filter:
+            filtered_text = original_text
+            filtered_words = []
+        else:
+            filtered_text, filtered_words = self.content_filter.filter(original_text)
+            if filtered_words:
+                print(f"Filtered words: {filtered_words}")
+
+        # Step 3: Transform
+        if skip_transform:
+            transformed_text = filtered_text
+        else:
+            print("Transforming style...")
+            transformed_text = self.style_transformer.transform(
+                filtered_text, style_prompt, persona
+            )
+
+        result = PipelineResult(
+            original_text=original_text,
+            filtered_text=filtered_text,
+            transformed_text=transformed_text,
+            filtered_words=filtered_words,
         )
+
+        # Step 4: Speak (optional)
+        if speak and transformed_text:
+            self.tts.speak(transformed_text)
+
+        return result
 
     def process_text(
         self,
