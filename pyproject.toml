@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aletheia"
+version = "0.1.0"
+description = "Aletheia - Voice/Text Style Transformation Pipeline with STT, filtering, and style transformation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "ollama>=0.3.0",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "python-multipart>=0.0.6",
+    "edge-tts>=6.1.0",
+    "gradio>=4.0.0",
+]
+
+[project.scripts]
+aletheia = "aletheia.main:main"
+aletheia-gui = "aletheia.gui:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aletheia"]

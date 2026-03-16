@@ -1,0 +1,53 @@
+whisper:
+  model: base
+  device: auto
+
+ollama:
+  model: qwen2.5:7b
+  base_url: http://localhost:11434
+  no_think: false
+
+filter:
+  enabled: true
+  action: mask
+  replacement: '***'
+  patterns:
+  - fuck
+  - shit
+  - damn
+
+style:
+  default_persona: assistant
+  personas:
+    assistant:
+      name: Friendly Assistant
+      prompt: >
+        You are a friendly and professional assistant.
+        Respond politely and helpfully.
+    casual:
+      name: Casual Friend
+      prompt: >
+        You are the user's casual friend.
+        Talk in a relaxed, friendly manner.
+  default_prompt: >
+    Please rewrite the following text in a polite and friendly tone.
+    Keep the original meaning while being respectful.
+    Output only the transformed text without additional explanation.
+
+watch:
+  input_dir: ./input
+  output_dir: ./output
+  poll_interval: 0.5
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  silence_threshold: 0.01
+  silence_duration: 1.5
+  max_duration: 30
+
+tts:
+  language: ko
+  voice_type: female
+  rate: +0%
+  volume: +0%
