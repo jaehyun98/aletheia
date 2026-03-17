@@ -10,6 +10,7 @@ import yaml
 
 from .config import get_config, CONFIG_PATH
 from .pipeline import AletheiaPipeline
+from .printing import list_windows_printers, list_windows_fonts, PAPER_SIZES
 from .watch import FolderWatcher
 
 logger = logging.getLogger(__name__)
@@ -305,6 +306,41 @@ def save_watch_config(input_dir: str, output_dir: str, poll_interval: float) -> 
     return f"[OK] Watch paths saved (input: {input_dir.strip()}, output: {output_dir.strip()})"
 
 
+def load_print_config() -> tuple[bool, str, str, bool, int, str]:
+    """Load printing settings from config."""
+    config = load_config()
+    printing = config.get("printing", {})
+    return (
+        printing.get("auto_print", False),
+        printing.get("printer_name", ""),
+        printing.get("paper_size", "A4"),
+        printing.get("landscape", False),
+        printing.get("font_size", 12),
+        printing.get("font_name", "Malgun Gothic"),
+    )
+
+
+def save_print_config(
+    auto_print: bool, printer_name: str, paper_size: str,
+    landscape: bool = False, font_size: int = 12,
+    font_name: str = "Malgun Gothic",
+) -> str:
+    """Save printing settings to config."""
+    config = load_config()
+    config["printing"] = {
+        "auto_print": bool(auto_print),
+        "printer_name": printer_name.strip() if printer_name else "",
+        "paper_size": paper_size.strip() if paper_size else "A4",
+        "landscape": bool(landscape),
+        "font_size": int(font_size),
+        "font_name": font_name.strip() if font_name else "Malgun Gothic",
+    }
+    save_config(config)
+    state = "ON" if auto_print else "OFF"
+    orient = "Landscape" if landscape else "Portrait"
+    return f"[OK] Print settings saved (auto_print: {state}, printer: {printer_name or 'none'}, paper: {paper_size or 'A4'}, {orient}, {font_name} {font_size}pt)"
+
+
 def toggle_no_think(enabled: bool) -> str:
     """Toggle no_think option and save to config."""
     config = load_config()
@@ -369,7 +405,18 @@ def delete_ollama_model(model_name: str) -> tuple[str, list]:
         return f"[Error] Delete failed: {str(e)}", get_ollama_models()
 
 
-def start_watch(input_dir: str, output_dir: str, poll_interval: float, persona: str) -> tuple[str, str]:
+def start_watch(
+    input_dir: str,
+    output_dir: str,
+    poll_interval: float,
+    persona: str,
+    auto_print: bool = False,
+    printer_name: str = "",
+    paper_size: str = "",
+    landscape: bool = False,
+    font_size: int = 12,
+    font_name: str = "Malgun Gothic",
+) -> tuple[str, str]:
     """Start the folder watcher from GUI."""
     global _watcher, _watcher_log_since
 
@@ -385,6 +432,12 @@ def start_watch(input_dir: str, output_dir: str, poll_interval: float, persona: 
         pipeline=p,
         poll_interval=float(poll_interval),
         persona=persona if persona and persona != "custom" else None,
+        auto_print=bool(auto_print),
+        printer_name=printer_name if printer_name else None,
+        paper_size=paper_size if paper_size else "",
+        landscape=bool(landscape),
+        font_size=int(font_size),
+        font_name=font_name if font_name else "Malgun Gothic",
     )
     _watcher.start()
     return "Running", "[OK] Watch mode started"
@@ -572,152 +625,172 @@ def create_ui() -> gr.Blocks:
 
             # Settings tab
             with gr.TabItem("Settings"):
-                with gr.Row():
-                    # Left column - Current model selection
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Current Model")
+                # --- Model Accordion ---
+                with gr.Accordion("Model", open=True):
+                    model_dropdown = gr.Dropdown(
+                        choices=get_ollama_models(),
+                        value=get_current_model(),
+                        label="Model to Use",
+                        info="Select from installed models",
+                    )
+                    with gr.Row():
+                        model_refresh_btn = gr.Button("Refresh")
+                        model_apply_btn = gr.Button("Apply", variant="primary")
+                    no_think_checkbox = gr.Checkbox(
+                        label="no_think",
+                        value=load_config().get("ollama", {}).get("no_think", False),
+                        info="Disable model thinking (for Qwen etc.)",
+                    )
+                    model_status = gr.Textbox(
+                        label="Status",
+                        interactive=False,
+                    )
 
-                        model_dropdown = gr.Dropdown(
-                            choices=get_ollama_models(),
-                            value=get_current_model(),
-                            label="Model to Use",
-                            info="Select from installed models",
+                # --- Model Library Accordion ---
+                with gr.Accordion("Model Library", open=False):
+                    popular_model_dropdown = gr.Dropdown(
+                        choices=[(desc, name) for name, desc in POPULAR_MODELS],
+                        label="Popular Models",
+                        info="Click to auto-fill",
+                    )
+                    with gr.Row():
+                        model_name_input = gr.Textbox(
+                            label="Model Name",
+                            placeholder="e.g., llama3.2:3b, qwen2.5:7b",
+                            info="Enter model name to download",
                         )
-
-                        with gr.Row():
-                            model_refresh_btn = gr.Button("Refresh")
-                            model_apply_btn = gr.Button("Apply", variant="primary")
-
-                        model_status = gr.Textbox(
-                            label="Status",
-                            interactive=False,
-                        )
-
-                        gr.Markdown("---")
-                        gr.Markdown("### Inference Options")
-
-                        no_think_checkbox = gr.Checkbox(
-                            label="no_think",
-                            value=load_config().get("ollama", {}).get("no_think", False),
-                            info="Disable model thinking (for Qwen etc.)",
-                        )
-                        no_think_status = gr.Textbox(
-                            label="Status",
-                            interactive=False,
-                        )
-
-                        gr.Markdown("---")
-                        gr.Markdown("### Delete Model")
-
+                        model_pull_btn = gr.Button("Download", variant="primary")
+                    gr.Markdown("---")
+                    with gr.Row():
                         model_delete_dropdown = gr.Dropdown(
                             choices=get_ollama_models(),
                             label="Model to Delete",
                             info="Select installed model",
                         )
                         model_delete_btn = gr.Button("Delete", variant="stop")
-                        model_delete_status = gr.Textbox(
-                            label="Delete Status",
-                            interactive=False,
+                    model_lib_status = gr.Textbox(
+                        label="Status",
+                        interactive=False,
+                    )
+                    gr.Markdown(
+                        "Model size: 1B < 3B < 7B < 9B (larger = smarter but slower) · "
+                        "Korean recommended: `qwen2.5` · "
+                        "[Ollama Library](https://ollama.com/library)"
+                    )
+
+                # --- Watch Mode Accordion ---
+                with gr.Accordion("Watch Mode", open=False):
+                    watch_input_dir, watch_output_dir, watch_poll = load_watch_config()
+
+                    with gr.Row():
+                        watch_input = gr.Textbox(
+                            label="Input Directory",
+                            value=watch_input_dir,
+                            placeholder="./input",
+                        )
+                        watch_output = gr.Textbox(
+                            label="Output Directory",
+                            value=watch_output_dir,
+                            placeholder="./output",
+                        )
+                        watch_poll_interval = gr.Number(
+                            label="Poll Interval (sec)",
+                            value=watch_poll,
+                            minimum=0.1,
+                            maximum=10.0,
+                            step=0.1,
                         )
 
-                    # Right column - Download new models
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Download Model")
+                    watch_persona = gr.Dropdown(
+                        choices=get_persona_choices(),
+                        value=get_pipeline().style_transformer.default_persona_key,
+                        label="Watch Persona",
+                        info="Persona to use in watch mode",
+                    )
 
-                        gr.Markdown("**Popular Models:**")
-                        popular_model_dropdown = gr.Dropdown(
-                            choices=[(desc, name) for name, desc in POPULAR_MODELS],
-                            label="Popular Models",
-                            info="Click to auto-fill",
+                    with gr.Row():
+                        watch_start_btn = gr.Button("Start", variant="primary")
+                        watch_stop_btn = gr.Button("Stop", variant="stop")
+                        watch_running_status = gr.Textbox(
+                            label="Status", value="Stopped", interactive=False,
                         )
 
-                        model_name_input = gr.Textbox(
-                            label="Model Name",
-                            placeholder="e.g., llama3.2:3b, qwen2.5:7b",
-                            info="Enter model name to download",
+                    watch_log_viewer = gr.Textbox(
+                        label="Watch Log",
+                        interactive=False,
+                        lines=10,
+                        max_lines=20,
+                    )
+
+                    watch_timer = gr.Timer(1.0, active=False)
+
+                    # Nested: Browse Folders
+                    with gr.Accordion("Browse Folders", open=False):
+                        file_explorer = gr.FileExplorer(
+                            root_dir=_get_default_browse_root(),
+                            file_count="single",
+                            label="Select a file inside the target folder",
+                            height=300,
+                        )
+                        with gr.Row():
+                            browse_set_input_btn = gr.Button(
+                                "Set as Input Dir", variant="primary",
+                            )
+                            browse_set_output_btn = gr.Button(
+                                "Set as Output Dir", variant="primary",
+                            )
+
+                    # Nested: Print Settings
+                    with gr.Accordion("Print Settings", open=False):
+                        print_auto, print_printer, print_paper, print_landscape, print_font_size, print_font_name = load_print_config()
+                        printer_choices = list_windows_printers()
+
+                        with gr.Row():
+                            watch_auto_print = gr.Checkbox(
+                                label="Auto-Print Output",
+                                value=print_auto,
+                                info="Automatically print output files",
+                            )
+                            watch_printer = gr.Dropdown(
+                                choices=printer_choices,
+                                value=print_printer if print_printer in printer_choices else None,
+                                label="Printer",
+                                info="Select Windows printer",
+                            )
+                            watch_paper_size = gr.Dropdown(
+                                choices=PAPER_SIZES,
+                                value=print_paper if print_paper in PAPER_SIZES else "A4",
+                                label="Paper Size",
+                                info="Select paper size for printing",
+                            )
+                            watch_refresh_printers = gr.Button("Refresh", size="sm")
+
+                        with gr.Row():
+                            watch_landscape = gr.Checkbox(
+                                label="Landscape",
+                                value=print_landscape,
+                                info="Print in landscape orientation",
+                            )
+                            watch_font_size = gr.Slider(
+                                label="Font Size (pt)",
+                                value=print_font_size,
+                                minimum=6,
+                                maximum=48,
+                                step=1,
+                                info="Font size for printing",
+                            )
+                        font_choices = list_windows_fonts()
+                        watch_font_name = gr.Dropdown(
+                            choices=font_choices,
+                            value=print_font_name if print_font_name in font_choices else "Malgun Gothic",
+                            label="Font",
+                            info="Select font for printing",
+                            allow_custom_value=True,
                         )
 
-                        model_pull_btn = gr.Button("Download", variant="primary")
-
-                        model_pull_status = gr.Textbox(
-                            label="Download Status",
-                            interactive=False,
-                        )
-
-                        gr.Markdown("---")
-                        gr.Markdown("#### Help")
-                        gr.Markdown("""
-- Select from **Popular Models** or enter name directly
-- Model size: 1B < 3B < 7B < 9B (larger = smarter but slower)
-- Korean recommended: `qwen2.5` series
-- See more at [Ollama Library](https://ollama.com/library)
-                        """)
-
-                gr.Markdown("---")
-                gr.Markdown("### Watch Mode (TouchDesigner)")
-
-                watch_input_dir, watch_output_dir, watch_poll = load_watch_config()
-
-                with gr.Row():
-                    watch_input = gr.Textbox(
-                        label="Input Directory",
-                        value=watch_input_dir,
-                        placeholder="./input",
-                    )
-                    watch_output = gr.Textbox(
-                        label="Output Directory",
-                        value=watch_output_dir,
-                        placeholder="./output",
-                    )
-                    watch_poll_interval = gr.Number(
-                        label="Poll Interval (sec)",
-                        value=watch_poll,
-                        minimum=0.1,
-                        maximum=10.0,
-                        step=0.1,
-                    )
-
-                watch_persona = gr.Dropdown(
-                    choices=get_persona_choices(),
-                    value=get_pipeline().style_transformer.default_persona_key,
-                    label="Watch Persona",
-                    info="Persona to use in watch mode",
-                )
-
-                with gr.Row():
-                    watch_start_btn = gr.Button("Start", variant="primary")
-                    watch_stop_btn = gr.Button("Stop", variant="stop")
-                    watch_running_status = gr.Textbox(
-                        label="Status", value="Stopped", interactive=False,
-                    )
-
-                watch_log_viewer = gr.Textbox(
-                    label="Watch Log",
-                    interactive=False,
-                    lines=10,
-                    max_lines=20,
-                )
-
-                watch_timer = gr.Timer(1.0, active=False)
-
-                gr.Markdown("#### Browse")
-                file_explorer = gr.FileExplorer(
-                    root_dir=_get_default_browse_root(),
-                    file_count="single",
-                    label="Select a file inside the target folder",
-                    height=300,
-                )
-                with gr.Row():
-                    browse_set_input_btn = gr.Button(
-                        "Set as Input Dir", variant="primary",
-                    )
-                    browse_set_output_btn = gr.Button(
-                        "Set as Output Dir", variant="primary",
-                    )
-
-                with gr.Row():
-                    watch_save_btn = gr.Button("Save Watch Settings", variant="primary")
-                    watch_status = gr.Textbox(label="Status", interactive=False)
+                    with gr.Row():
+                        watch_save_btn = gr.Button("Save Settings", variant="primary")
+                        watch_status = gr.Textbox(label="Status", interactive=False)
 
         # Event handlers
         def toggle_custom_persona(choice):
@@ -841,7 +914,7 @@ def create_ui() -> gr.Blocks:
         model_pull_btn.click(
             on_model_pull,
             inputs=[model_name_input],
-            outputs=[model_pull_status, model_dropdown, model_delete_dropdown],
+            outputs=[model_lib_status, model_dropdown, model_delete_dropdown],
         )
 
         # Model delete handler
@@ -857,30 +930,53 @@ def create_ui() -> gr.Blocks:
         model_delete_btn.click(
             on_model_delete,
             inputs=[model_delete_dropdown],
-            outputs=[model_delete_status, model_dropdown, model_delete_dropdown],
+            outputs=[model_lib_status, model_dropdown, model_delete_dropdown],
         )
 
         # no_think toggle handler
         no_think_checkbox.change(
             toggle_no_think,
             inputs=[no_think_checkbox],
-            outputs=[no_think_status],
+            outputs=[model_status],
         )
 
         # Watch mode handlers
+        def on_watch_save(input_dir, output_dir, poll_interval, auto_print, printer_name, paper_size, landscape, font_size, font_name):
+            watch_msg = save_watch_config(input_dir, output_dir, poll_interval)
+            print_msg = save_print_config(auto_print, printer_name, paper_size, landscape, int(font_size), font_name)
+            # Update running watcher's print settings in real-time
+            if _watcher is not None and _watcher.is_running:
+                _watcher.auto_print = bool(auto_print)
+                _watcher.printer_name = printer_name if printer_name else None
+                _watcher.paper_size = paper_size if paper_size else ""
+                _watcher.landscape = bool(landscape)
+                _watcher.font_size = int(font_size)
+                _watcher.font_name = font_name if font_name else "Malgun Gothic"
+                print_msg += " (applied to running watcher)"
+            return f"{watch_msg}\n{print_msg}"
+
         watch_save_btn.click(
-            save_watch_config,
-            inputs=[watch_input, watch_output, watch_poll_interval],
+            on_watch_save,
+            inputs=[watch_input, watch_output, watch_poll_interval, watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size, watch_font_name],
             outputs=[watch_status],
         )
 
-        def on_watch_start(input_dir, output_dir, poll_interval, persona):
-            status, msg = start_watch(input_dir, output_dir, poll_interval, persona)
+        # Refresh printers & fonts handler
+        def _refresh_printers_and_fonts():
+            return gr.update(choices=list_windows_printers()), gr.update(choices=list_windows_fonts())
+
+        watch_refresh_printers.click(
+            _refresh_printers_and_fonts,
+            outputs=[watch_printer, watch_font_name],
+        )
+
+        def on_watch_start(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, font_size, font_name):
+            status, msg = start_watch(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, int(font_size), font_name)
             return status, msg, gr.update(active=True)
 
         watch_start_btn.click(
             on_watch_start,
-            inputs=[watch_input, watch_output, watch_poll_interval, watch_persona],
+            inputs=[watch_input, watch_output, watch_poll_interval, watch_persona, watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size, watch_font_name],
             outputs=[watch_running_status, watch_status, watch_timer],
         )
 
@@ -944,6 +1040,22 @@ def create_ui() -> gr.Blocks:
             _set_output,
             inputs=[file_explorer],
             outputs=[watch_output, watch_status],
+        )
+
+        # Auto-start watch mode on GUI load
+        def _auto_start_watch():
+            input_dir, output_dir, poll_interval = load_watch_config()
+            print_auto, print_printer, print_paper, print_land, print_fs, print_fn = load_print_config()
+            persona = get_pipeline().style_transformer.default_persona_key
+            status, msg = start_watch(
+                input_dir, output_dir, poll_interval, persona,
+                print_auto, print_printer, print_paper, print_land, print_fs, print_fn,
+            )
+            return status, msg, gr.update(active=True)
+
+        app.load(
+            _auto_start_watch,
+            outputs=[watch_running_status, watch_status, watch_timer],
         )
 
     return app

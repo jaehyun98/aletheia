@@ -39,6 +39,11 @@ watch:
   output_dir: ./output
   poll_interval: 0.5
 
+printing:
+  auto_print: false
+  printer_name: ""
+  paper_size: A4
+
 audio:
   sample_rate: 16000
   channels: 1

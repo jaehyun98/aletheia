@@ -12,6 +12,7 @@ from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 from .pipeline import AletheiaPipeline
+from .printing import print_file
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,12 @@ class FolderWatcher:
         persona: str | None = None,
         skip_filter: bool = False,
         skip_transform: bool = False,
+        auto_print: bool = False,
+        printer_name: str | None = None,
+        paper_size: str = "",
+        landscape: bool = False,
+        font_size: int = 12,
+        font_name: str = "Malgun Gothic",
     ):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
@@ -39,6 +46,12 @@ class FolderWatcher:
         self.persona = persona
         self.skip_filter = skip_filter
         self.skip_transform = skip_transform
+        self.auto_print = auto_print
+        self.printer_name = printer_name
+        self.paper_size = paper_size
+        self.landscape = landscape
+        self.font_size = font_size
+        self.font_name = font_name
 
         self.queue: Queue[Path] = Queue()
         self._stop_event = Event()
@@ -183,6 +196,14 @@ class FolderWatcher:
             output_path.write_text(result.transformed_text, encoding="utf-8")
             logger.info("Output: %s", output_path.name)
             self._log(f"Output: {output_path.name}")
+
+            # Auto-print if enabled
+            if self.auto_print and self.printer_name:
+                if print_file(output_path, self.printer_name, self.paper_size, self.landscape, self.font_size, self.font_name):
+                    logger.info("Printed: %s -> %s", output_path.name, self.printer_name)
+                    self._log(f"Printed: {output_path.name} -> {self.printer_name}")
+                else:
+                    self._log(f"Print failed: {output_path.name}")
 
             # Move processed file to done/
             try:
