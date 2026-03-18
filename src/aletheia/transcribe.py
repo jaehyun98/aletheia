@@ -43,7 +43,7 @@ class Transcriber:
             )
         return self._model
 
-    def transcribe(self, audio_data: bytes, language: str | None = None) -> str:
+    def transcribe(self, audio_data: bytes, language: str | None = None) -> tuple[str, str | None]:
         """Transcribe audio bytes to text.
 
         Args:
@@ -51,7 +51,7 @@ class Transcriber:
             language: Language code (e.g., 'ko', 'en'). Auto-detected if None.
 
         Returns:
-            Transcribed text
+            Tuple of (transcribed text, detected language code or None)
         """
         model = self._load_model()
 
@@ -74,16 +74,17 @@ class Transcriber:
                 text_parts.append(segment.text.strip())
 
             text = " ".join(text_parts)
+            detected = info.language if info.language else None
 
-            if info.language:
-                print(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
+            if detected:
+                print(f"Detected language: {detected} (probability: {info.language_probability:.2f})")
 
-            return text
+            return text, detected
         finally:
             # Clean up temp file
             Path(tmp_path).unlink(missing_ok=True)
 
-    def transcribe_file(self, file_path: str | Path, language: str | None = None) -> str:
+    def transcribe_file(self, file_path: str | Path, language: str | None = None) -> tuple[str, str | None]:
         """Transcribe an audio file to text.
 
         Args:
@@ -91,7 +92,7 @@ class Transcriber:
             language: Language code (e.g., 'ko', 'en'). Auto-detected if None.
 
         Returns:
-            Transcribed text
+            Tuple of (transcribed text, detected language code or None)
         """
         model = self._load_model()
 
@@ -107,8 +108,9 @@ class Transcriber:
             text_parts.append(segment.text.strip())
 
         text = " ".join(text_parts)
+        detected = info.language if info.language else None
 
-        if info.language:
-            print(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
+        if detected:
+            print(f"Detected language: {detected} (probability: {info.language_probability:.2f})")
 
-        return text
+        return text, detected

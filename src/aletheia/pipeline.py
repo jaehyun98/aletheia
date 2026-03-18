@@ -67,7 +67,7 @@ class AletheiaPipeline:
             PipelineResult with all processing stages
         """
         # Step 1: Transcribe
-        original_text = self.transcriber.transcribe(audio_data)
+        original_text, detected_lang = self.transcriber.transcribe(audio_data)
         print(f"Transcribed: {original_text}")
 
         # Step 2: Filter
@@ -85,7 +85,7 @@ class AletheiaPipeline:
         else:
             print("Transforming style...")
             transformed_text = self.style_transformer.transform(
-                filtered_text, style_prompt, persona
+                filtered_text, style_prompt, persona, language=detected_lang
             )
 
         result = PipelineResult(
@@ -93,6 +93,7 @@ class AletheiaPipeline:
             filtered_text=filtered_text,
             transformed_text=transformed_text,
             filtered_words=filtered_words,
+            language=detected_lang,
         )
 
         # Step 4: Speak (optional)
@@ -126,7 +127,7 @@ class AletheiaPipeline:
         file_path = Path(file_path)
 
         # Step 1: Transcribe directly from file (avoids temp-file roundtrip)
-        original_text = self.transcriber.transcribe_file(file_path)
+        original_text, detected_lang = self.transcriber.transcribe_file(file_path)
         print(f"Transcribed: {original_text}")
 
         # Step 2: Filter
@@ -144,7 +145,7 @@ class AletheiaPipeline:
         else:
             print("Transforming style...")
             transformed_text = self.style_transformer.transform(
-                filtered_text, style_prompt, persona
+                filtered_text, style_prompt, persona, language=detected_lang
             )
 
         result = PipelineResult(
@@ -152,6 +153,7 @@ class AletheiaPipeline:
             filtered_text=filtered_text,
             transformed_text=transformed_text,
             filtered_words=filtered_words,
+            language=detected_lang,
         )
 
         # Step 4: Speak (optional)

@@ -1,5 +1,6 @@
 """Style transformation using Ollama LLM."""
 
+import re
 from typing import Generator
 
 import ollama
@@ -84,8 +85,34 @@ class StyleTransformer:
             self._client = ollama.Client(host=self.base_url)
         return self._client
 
+    # Language-aware prompt templates
+    _PROMPTS = {
+        "ko": {
+            "default": "다음 텍스트를 정중하고 친절한 톤으로 다시 작성해주세요.",
+            "persona_fallback": "다음 텍스트에 자연스럽게 응답해주세요. 추가 설명 없이 응답만 출력하세요.",
+            "input_label": "원본 텍스트",
+            "lang_instruction": "반드시 한국어로만 응답하세요.",
+            "lang_name": "Korean",
+        },
+        "en": {
+            "default": "Please rewrite the following text in a polite and friendly tone.",
+            "persona_fallback": "Respond naturally to the following text. Output only the response without additional explanation.",
+            "input_label": "Original text",
+            "lang_instruction": "You MUST respond in English ONLY.",
+            "lang_name": "English",
+        },
+    }
+    _DEFAULT_LANG = "ko"
+
+    def _get_prompts(self, language: str | None) -> dict[str, str]:
+        """Return the prompt template dict for the given language code."""
+        if language and language in self._PROMPTS:
+            return self._PROMPTS[language]
+        return self._PROMPTS.get(self._DEFAULT_LANG, self._PROMPTS["ko"])
+
     def _build_messages(
-        self, text: str, style_prompt: str | None = None, persona: str | None = None
+        self, text: str, style_prompt: str | None = None, persona: str | None = None,
+        language: str | None = None,
     ) -> list[dict]:
         """Build chat messages with optional persona.
 
@@ -93,13 +120,25 @@ class StyleTransformer:
             text: Input text to process
             style_prompt: Custom style prompt
             persona: Persona key (preset name) or custom persona prompt
+            language: Detected language code (e.g., 'ko', 'en')
         """
         messages = []
+        prompts = self._get_prompts(language)
 
         # Get persona prompt (handles both preset keys and custom prompts)
         active_persona = self.get_persona(persona) if persona else self.persona
         if active_persona and active_persona.strip():
-            messages.append({"role": "system", "content": active_persona.strip()})
+            persona_text = active_persona.strip()
+            # Replace hardcoded language instructions with detected language
+            if language and language in self._PROMPTS:
+                # Remove existing target language rules (Korean/English hardcoded lines)
+                persona_text = re.sub(
+                    r"\d+\.\s*Target Language:.*$",
+                    f"Target Language: {prompts['lang_instruction']}",
+                    persona_text,
+                    flags=re.MULTILINE | re.IGNORECASE,
+                )
+            messages.append({"role": "system", "content": persona_text})
 
         # Add few-shot examples if available
         persona_key = persona or self.default_persona_key
@@ -113,17 +152,20 @@ class StyleTransformer:
         # Add user message
         # If persona is set but no custom style prompt, use a simpler instruction
         if active_persona and not style_prompt:
-            prompt = "다음 텍스트에 자연스럽게 응답해주세요. 추가 설명 없이 응답만 출력하세요."
+            prompt = prompts["persona_fallback"]
         else:
-            prompt = style_prompt or self.default_prompt
+            prompt = style_prompt or prompts["default"]
 
-        full_prompt = f"{prompt}\n\n원본 텍스트: {text}"
+        label = prompts["input_label"]
+        lang_rule = prompts["lang_instruction"]
+        full_prompt = f"{prompt}\n{lang_rule}\n\n{label}: {text}"
         messages.append({"role": "user", "content": full_prompt})
 
         return messages
 
     def transform(
-        self, text: str, style_prompt: str | None = None, persona: str | None = None
+        self, text: str, style_prompt: str | None = None, persona: str | None = None,
+        language: str | None = None,
     ) -> str:
         """Transform text style using LLM.
 
@@ -131,6 +173,7 @@ class StyleTransformer:
             text: Input text to transform
             style_prompt: Custom style prompt. Uses default if None.
             persona: Custom persona (system prompt). Uses config if None.
+            language: Detected language code for language-aware prompts.
 
         Returns:
             Transformed text
@@ -139,17 +182,20 @@ class StyleTransformer:
             return text
 
         client = self._get_client()
-        options = {"think": not self.no_think} if self.no_think else {}
+        kwargs = {}
+        if self.no_think:
+            kwargs["think"] = False
         response = client.chat(
             model=self.model,
-            messages=self._build_messages(text, style_prompt, persona),
-            options=options,
+            messages=self._build_messages(text, style_prompt, persona, language),
+            **kwargs,
         )
 
         return response["message"]["content"].strip()
 
     def transform_stream(
-        self, text: str, style_prompt: str | None = None, persona: str | None = None
+        self, text: str, style_prompt: str | None = None, persona: str | None = None,
+        language: str | None = None,
     ) -> Generator[str, None, None]:
         """Transform text style with streaming output.
 
@@ -157,6 +203,7 @@ class StyleTransformer:
             text: Input text to transform
             style_prompt: Custom style prompt. Uses default if None.
             persona: Custom persona (system prompt). Uses config if None.
+            language: Detected language code for language-aware prompts.
 
         Yields:
             Chunks of transformed text
@@ -166,12 +213,14 @@ class StyleTransformer:
             return
 
         client = self._get_client()
-        options = {"think": not self.no_think} if self.no_think else {}
+        kwargs = {}
+        if self.no_think:
+            kwargs["think"] = False
         stream = client.chat(
             model=self.model,
-            messages=self._build_messages(text, style_prompt, persona),
+            messages=self._build_messages(text, style_prompt, persona, language),
             stream=True,
-            options=options,
+            **kwargs,
         )
 
         for chunk in stream:
