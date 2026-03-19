@@ -147,15 +147,32 @@ Persona examples:
         output_dir = Path(args.output_dir or cfg.get("watch.output_dir", "./output"))
         poll_interval = args.poll_interval or cfg.get("watch.poll_interval", 0.5)
 
+        # Load print settings from config (saved by GUI)
+        auto_print = cfg.get("printing.auto_print", False)
+        printer_name = cfg.get("printing.printer_name", "")
+        paper_size = cfg.get("printing.paper_size", "A4")
+        landscape = cfg.get("printing.landscape", False)
+        font_size = cfg.get("printing.font_size", 12)
+        font_name = cfg.get("printing.font_name", "Malgun Gothic")
+
+        # Use persona from CLI arg or default from config
+        persona = args.persona or pipeline.style_transformer.default_persona_key or None
+
         watcher = FolderWatcher(
             input_dir=input_dir,
             output_dir=output_dir,
             pipeline=pipeline,
             poll_interval=poll_interval,
             style_prompt=args.style,
-            persona=args.persona,
+            persona=persona,
             skip_filter=args.no_filter,
             skip_transform=args.no_transform,
+            auto_print=auto_print,
+            printer_name=printer_name if printer_name else None,
+            paper_size=paper_size,
+            landscape=landscape,
+            font_size=font_size,
+            font_name=font_name,
         )
         watcher.start()
         watcher.run_forever()
