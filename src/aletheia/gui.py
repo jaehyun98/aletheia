@@ -1,9 +1,13 @@
 """Gradio web GUI for Aletheia."""
 
 import logging
+import sys
 import tempfile
 import time
 from pathlib import Path
+
+# Suppress noisy Windows asyncio connection-reset warnings
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 import gradio as gr
 import yaml
@@ -473,6 +477,42 @@ def poll_watch_logs() -> tuple[str, str, gr.update]:
     return status, log_text, gr.update(active=active)
 
 
+def poll_queue_status() -> tuple[str, str]:
+    """Poll watcher queue status for the Timer callback."""
+    if _watcher is None or not _watcher.is_running:
+        return "", ""
+    current, pending = _watcher.get_queue_status()
+    current_text = current if current else "(none)"
+    pending_text = "\n".join(pending) if pending else "(empty)"
+    return current_text, pending_text
+
+
+def cancel_queue_file(filename: str) -> tuple[str, str, str]:
+    """Cancel a single pending file."""
+    if not filename or not filename.strip():
+        return gr.update(), gr.update(), "[Error] Enter a filename"
+    if _watcher is None or not _watcher.is_running:
+        return gr.update(), gr.update(), "[Error] Watch not running"
+    ok = _watcher.cancel_file(filename.strip())
+    if ok:
+        current, pending = _watcher.get_queue_status()
+        current_text = current if current else "(none)"
+        pending_text = "\n".join(pending) if pending else "(empty)"
+        return current_text, pending_text, f"[OK] Cancelled: {filename.strip()}"
+    return gr.update(), gr.update(), f"[Error] '{filename.strip()}' not in queue"
+
+
+def clear_watch_queue() -> tuple[str, str, str]:
+    """Clear all pending files from queue."""
+    if _watcher is None or not _watcher.is_running:
+        return gr.update(), gr.update(), "[Error] Watch not running"
+    count = _watcher.clear_queue()
+    current, pending = _watcher.get_queue_status()
+    current_text = current if current else "(none)"
+    pending_text = "\n".join(pending) if pending else "(empty)"
+    return current_text, pending_text, f"[OK] Cleared {count} file(s)"
+
+
 def _get_default_browse_root() -> str:
     """Return a sensible default root for the folder browser."""
     import platform
@@ -722,6 +762,32 @@ def create_ui() -> gr.Blocks:
                         max_lines=20,
                     )
 
+                    with gr.Accordion("Queue", open=True):
+                        queue_current_file = gr.Textbox(
+                            label="Processing",
+                            value="(none)",
+                            interactive=False,
+                        )
+                        queue_pending_list = gr.Textbox(
+                            label="Pending Files",
+                            value="(empty)",
+                            interactive=False,
+                            lines=4,
+                            max_lines=10,
+                        )
+                        with gr.Row():
+                            queue_cancel_input = gr.Textbox(
+                                label="Filename to Cancel",
+                                placeholder="e.g., recording.wav",
+                                scale=3,
+                            )
+                            queue_cancel_btn = gr.Button("Cancel File", scale=1)
+                        queue_clear_btn = gr.Button("Clear Queue", variant="stop")
+                        queue_status = gr.Textbox(
+                            label="Queue Action",
+                            interactive=False,
+                        )
+
                     watch_timer = gr.Timer(1.0, active=False)
 
                     # Nested: Browse Folders
@@ -791,6 +857,14 @@ def create_ui() -> gr.Blocks:
                     with gr.Row():
                         watch_save_btn = gr.Button("Save Settings", variant="primary")
                         watch_status = gr.Textbox(label="Status", interactive=False)
+
+                # --- Restart ---
+                with gr.Accordion("Application", open=False):
+                    gr.Markdown("Reload: config.yaml 재적용 (빠름) / Restart: 프로세스 전체 재시작 (코드 변경 시)")
+                    with gr.Row():
+                        reload_btn = gr.Button("Reload Config", variant="secondary")
+                        restart_btn = gr.Button("Restart App", variant="stop")
+                    app_status = gr.Textbox(label="Status", interactive=False)
 
         # Event handlers
         def toggle_custom_persona(choice):
@@ -972,21 +1046,21 @@ def create_ui() -> gr.Blocks:
 
         def on_watch_start(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, font_size, font_name):
             status, msg = start_watch(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, int(font_size), font_name)
-            return status, msg, gr.update(active=True)
+            return status, msg, gr.update(active=True), "(none)", "(empty)"
 
         watch_start_btn.click(
             on_watch_start,
             inputs=[watch_input, watch_output, watch_poll_interval, watch_persona, watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size, watch_font_name],
-            outputs=[watch_running_status, watch_status, watch_timer],
+            outputs=[watch_running_status, watch_status, watch_timer, queue_current_file, queue_pending_list],
         )
 
         def on_watch_stop():
             status, msg = stop_watch()
-            return status, msg, gr.update(active=False)
+            return status, msg, gr.update(active=False), "(none)", "(empty)"
 
         watch_stop_btn.click(
             on_watch_stop,
-            outputs=[watch_running_status, watch_status, watch_timer],
+            outputs=[watch_running_status, watch_status, watch_timer, queue_current_file, queue_pending_list],
         )
 
         def on_watch_tick(current_log):
@@ -995,12 +1069,25 @@ def create_ui() -> gr.Blocks:
                 updated = (current_log + "\n" + new_lines).strip() if current_log else new_lines
             else:
                 updated = current_log or ""
-            return status, updated, timer_update
+            q_current, q_pending = poll_queue_status()
+            return status, updated, timer_update, q_current, q_pending
 
         watch_timer.tick(
             on_watch_tick,
             inputs=[watch_log_viewer],
-            outputs=[watch_running_status, watch_log_viewer, watch_timer],
+            outputs=[watch_running_status, watch_log_viewer, watch_timer, queue_current_file, queue_pending_list],
+        )
+
+        # Queue cancel/clear handlers
+        queue_cancel_btn.click(
+            cancel_queue_file,
+            inputs=[queue_cancel_input],
+            outputs=[queue_current_file, queue_pending_list, queue_status],
+        )
+
+        queue_clear_btn.click(
+            clear_watch_queue,
+            outputs=[queue_current_file, queue_pending_list, queue_status],
         )
 
         # FileExplorer browse handlers
@@ -1042,6 +1129,36 @@ def create_ui() -> gr.Blocks:
             outputs=[watch_output, watch_status],
         )
 
+        # Reload config (no restart)
+        def on_reload_config():
+            reload_pipeline()
+            return "[OK] Config reloaded"
+
+        reload_btn.click(on_reload_config, outputs=[app_status])
+
+        # Full restart
+        def on_restart_app():
+            import os, subprocess, threading
+            def _restart():
+                time.sleep(1)
+                # Find and run run_gui.bat for proper restart
+                project_root = CONFIG_PATH.parent
+                bat_file = project_root / "run_gui.bat"
+                if bat_file.exists():
+                    subprocess.Popen(
+                        ["cmd", "/c", str(bat_file)],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                else:
+                    # Fallback: run exe/script directly with correct cwd
+                    cmd = sys.argv if sys.argv[0].endswith('.exe') else [sys.executable] + sys.argv
+                    subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=str(project_root))
+                os._exit(0)
+            threading.Thread(target=_restart, daemon=True).start()
+            return "[OK] Restarting... (refresh browser in a few seconds)"
+
+        restart_btn.click(on_restart_app, outputs=[app_status])
+
         # Auto-start watch mode on GUI load
         def _auto_start_watch():
             input_dir, output_dir, poll_interval = load_watch_config()
@@ -1051,11 +1168,11 @@ def create_ui() -> gr.Blocks:
                 input_dir, output_dir, poll_interval, persona,
                 print_auto, print_printer, print_paper, print_land, print_fs, print_fn,
             )
-            return status, msg, gr.update(active=True)
+            return status, msg, gr.update(active=True), "(none)", "(empty)"
 
         app.load(
             _auto_start_watch,
-            outputs=[watch_running_status, watch_status, watch_timer],
+            outputs=[watch_running_status, watch_status, watch_timer, queue_current_file, queue_pending_list],
         )
 
     return app

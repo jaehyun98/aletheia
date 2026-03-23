@@ -58,6 +58,9 @@ class FolderWatcher:
         self._known_files: set[str] = set()
         self._log_lines: list[tuple[float, str]] = []
         self._log_lock = Lock()
+        self._pending_files: list[Path] = []
+        self._pending_lock = Lock()
+        self._current_file: Path | None = None
 
     @property
     def is_running(self) -> bool:
@@ -114,9 +117,38 @@ class FolderWatcher:
             logger.info("Shutting down...")
             self.stop()
 
+    def get_queue_status(self) -> tuple[str | None, list[str]]:
+        """Return (current_file_name, list_of_pending_file_names)."""
+        with self._pending_lock:
+            current = self._current_file.name if self._current_file else None
+            pending = [f.name for f in self._pending_files]
+        return current, pending
+
+    def cancel_file(self, filename: str) -> bool:
+        """Cancel a pending file by name. Returns True if removed."""
+        with self._pending_lock:
+            for f in self._pending_files:
+                if f.name == filename:
+                    self._pending_files.remove(f)
+                    self._log(f"Cancelled: {filename}")
+                    return True
+        return False
+
+    def clear_queue(self) -> int:
+        """Cancel all pending files. Returns count removed."""
+        with self._pending_lock:
+            count = len(self._pending_files)
+            self._pending_files.clear()
+        if count:
+            self._log(f"Queue cleared: {count} file(s) cancelled")
+        return count
+
     def stop(self):
         """Signal threads to stop."""
         self._stop_event.set()
+        with self._pending_lock:
+            self._pending_files.clear()
+        self._current_file = None
         self._log("Watch mode stopped")
 
     def _poll_loop(self):
@@ -130,6 +162,8 @@ class FolderWatcher:
                         if f.name not in self._known_files:
                             self._known_files.add(f.name)
                             self.queue.put(f)
+                            with self._pending_lock:
+                                self._pending_files.append(f)
                             logger.info("Queued: %s", f.name)
                             self._log(f"Queued: {f.name}")
             except Exception as e:
@@ -161,6 +195,15 @@ class FolderWatcher:
             except Empty:
                 continue
 
+            # Check if cancelled (removed from _pending_files)
+            with self._pending_lock:
+                if file_path not in self._pending_files:
+                    logger.info("Skipped (cancelled): %s", file_path.name)
+                    self._log(f"Skipped (cancelled): {file_path.name}")
+                    continue
+                self._pending_files.remove(file_path)
+                self._current_file = file_path
+
             try:
                 if not file_path.exists():
                     logger.warning("File disappeared before processing: %s", file_path.name)
@@ -175,6 +218,8 @@ class FolderWatcher:
             except Exception as e:
                 logger.exception("Worker error for %s: %s", file_path.name, e)
                 self._log(f"ERROR: {file_path.name}: {e}")
+            finally:
+                self._current_file = None
 
     def _process_file(self, file_path: Path):
         """Process a single WAV file and save the result."""

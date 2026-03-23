@@ -32,6 +32,7 @@ class StyleTransformer:
             "다음 텍스트를 정중하고 친절한 톤으로 다시 작성해주세요.",
         )
         self.no_think = ollama_config.get("no_think", False)
+        self.max_tokens = ollama_config.get("max_tokens", 4096)
         self._client: ollama.Client | None = None
 
     def get_persona(self, persona_key: str | None = None) -> str:
@@ -82,7 +83,7 @@ class StyleTransformer:
     def _get_client(self) -> ollama.Client:
         """Get or create Ollama client."""
         if self._client is None:
-            self._client = ollama.Client(host=self.base_url)
+            self._client = ollama.Client(host=self.base_url, timeout=300)
         return self._client
 
     # Language-aware prompt templates
@@ -182,16 +183,20 @@ class StyleTransformer:
             return text
 
         client = self._get_client()
-        kwargs = {}
-        if self.no_think:
-            kwargs["think"] = False
+        think_flag = not self.no_think
+        # When thinking is enabled, don't cap num_predict (thinking tokens count toward it)
+        options = {} if think_flag else {"num_predict": self.max_tokens}
         response = client.chat(
             model=self.model,
             messages=self._build_messages(text, style_prompt, persona, language),
-            **kwargs,
+            options=options,
+            think=think_flag,
         )
 
-        return response["message"]["content"].strip()
+        content = response["message"]["content"].strip()
+        # Safety net: strip <think>…</think> blocks if they leak into content
+        content = re.sub(r"<think>[\s\S]*?</think>", "", content).strip()
+        return content
 
     def transform_stream(
         self, text: str, style_prompt: str | None = None, persona: str | None = None,
@@ -213,20 +218,33 @@ class StyleTransformer:
             return
 
         client = self._get_client()
-        kwargs = {}
-        if self.no_think:
-            kwargs["think"] = False
+        think_flag = not self.no_think
+        options = {} if think_flag else {"num_predict": self.max_tokens}
         stream = client.chat(
             model=self.model,
             messages=self._build_messages(text, style_prompt, persona, language),
             stream=True,
-            **kwargs,
+            options=options,
+            think=think_flag,
         )
 
+        in_think = False
         for chunk in stream:
             content = chunk["message"]["content"]
-            if content:
-                yield content
+            if not content:
+                continue
+            # Filter out <think>…</think> blocks from streaming output
+            if "<think>" in content:
+                in_think = True
+            if in_think:
+                if "</think>" in content:
+                    # Emit only text after </think>
+                    after = content.split("</think>", 1)[1]
+                    in_think = False
+                    if after:
+                        yield after
+                continue
+            yield content
 
     def check_connection(self) -> bool:
         """Check if Ollama server is accessible and model is available."""

@@ -5,6 +5,9 @@ import logging
 import sys
 from pathlib import Path
 
+# Suppress noisy Windows asyncio connection-reset warnings
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+
 from .config import get_config
 from .pipeline import AletheiaPipeline
 

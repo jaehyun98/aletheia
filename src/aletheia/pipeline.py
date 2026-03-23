@@ -20,6 +20,17 @@ except OSError:
     load_audio_file = None
 
 
+def detect_text_language(text: str) -> str:
+    """Detect language from text using Unicode character ranges.
+
+    Returns 'ko' if Korean characters are present, otherwise 'en'.
+    """
+    for ch in text:
+        if '\uAC00' <= ch <= '\uD7A3' or '\u3131' <= ch <= '\u318E':
+            return "ko"
+    return "en"
+
+
 @dataclass
 class PipelineResult:
     """Result from pipeline processing."""
@@ -191,12 +202,15 @@ class AletheiaPipeline:
         else:
             filtered_text, filtered_words = self.content_filter.filter(text)
 
+        # Detect language from text
+        detected_lang = detect_text_language(filtered_text)
+
         # Step 2: Transform
         if skip_transform:
             transformed_text = filtered_text
         else:
             transformed_text = self.style_transformer.transform(
-                filtered_text, style_prompt, persona
+                filtered_text, style_prompt, persona, language=detected_lang
             )
 
         result = PipelineResult(
@@ -204,6 +218,7 @@ class AletheiaPipeline:
             filtered_text=filtered_text,
             transformed_text=transformed_text,
             filtered_words=filtered_words,
+            language=detected_lang,
         )
 
         # Step 3: Speak (optional)
@@ -275,7 +290,8 @@ class AletheiaPipeline:
         else:
             filtered_text, _ = self.content_filter.filter(text)
 
-        yield from self.style_transformer.transform_stream(filtered_text, style_prompt, persona)
+        detected_lang = detect_text_language(filtered_text)
+        yield from self.style_transformer.transform_stream(filtered_text, style_prompt, persona, language=detected_lang)
 
     def check_services(self) -> dict[str, bool]:
         """Check if all required services are available.
