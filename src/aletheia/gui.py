@@ -681,6 +681,40 @@ def create_ui() -> gr.Blocks:
                         value=load_config().get("ollama", {}).get("no_think", False),
                         info="Disable model thinking (for Qwen etc.)",
                     )
+                    with gr.Accordion("Generation Parameters", open=False):
+                        _ollama_cfg = load_config().get("ollama", {})
+                        gen_temperature = gr.Slider(
+                            label="Temperature",
+                            value=_ollama_cfg.get("temperature", 0.8),
+                            minimum=0.0, maximum=2.0, step=0.05,
+                            info="0.0=deterministic, 1.0+=creative",
+                        )
+                        gen_top_p = gr.Slider(
+                            label="Top P",
+                            value=_ollama_cfg.get("top_p", 0.9),
+                            minimum=0.0, maximum=1.0, step=0.05,
+                            info="Nucleus sampling threshold",
+                        )
+                        gen_top_k = gr.Slider(
+                            label="Top K",
+                            value=_ollama_cfg.get("top_k", 40),
+                            minimum=1, maximum=200, step=1,
+                            info="Top-k sampling",
+                        )
+                        gen_repeat_penalty = gr.Slider(
+                            label="Repeat Penalty",
+                            value=_ollama_cfg.get("repeat_penalty", 1.1),
+                            minimum=1.0, maximum=2.0, step=0.05,
+                            info="1.0=off, higher=less repetition",
+                        )
+                        gen_max_tokens = gr.Slider(
+                            label="Max Tokens",
+                            value=_ollama_cfg.get("max_tokens", 4096),
+                            minimum=256, maximum=16384, step=256,
+                            info="Maximum output tokens",
+                        )
+                        gen_apply_btn = gr.Button("Apply Parameters", variant="primary")
+                        gen_status = gr.Textbox(label="Status", interactive=False)
                     model_status = gr.Textbox(
                         label="Status",
                         interactive=False,
@@ -1012,6 +1046,33 @@ def create_ui() -> gr.Blocks:
             toggle_no_think,
             inputs=[no_think_checkbox],
             outputs=[model_status],
+        )
+
+        # Generation parameters handler
+        def on_apply_gen_params(temperature, top_p, top_k, repeat_penalty, max_tokens):
+            config = load_config()
+            if "ollama" not in config:
+                config["ollama"] = {}
+            config["ollama"]["temperature"] = float(temperature)
+            config["ollama"]["top_p"] = float(top_p)
+            config["ollama"]["top_k"] = int(top_k)
+            config["ollama"]["repeat_penalty"] = float(repeat_penalty)
+            config["ollama"]["max_tokens"] = int(max_tokens)
+            save_config(config)
+
+            p = get_pipeline()
+            p.style_transformer.temperature = float(temperature)
+            p.style_transformer.top_p = float(top_p)
+            p.style_transformer.top_k = int(top_k)
+            p.style_transformer.repeat_penalty = float(repeat_penalty)
+            p.style_transformer.max_tokens = int(max_tokens)
+
+            return f"[OK] temperature={temperature}, top_p={top_p}, top_k={int(top_k)}, repeat_penalty={repeat_penalty}, max_tokens={int(max_tokens)}"
+
+        gen_apply_btn.click(
+            on_apply_gen_params,
+            inputs=[gen_temperature, gen_top_p, gen_top_k, gen_repeat_penalty, gen_max_tokens],
+            outputs=[gen_status],
         )
 
         # Watch mode handlers

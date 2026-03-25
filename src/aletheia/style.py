@@ -33,6 +33,10 @@ class StyleTransformer:
         )
         self.no_think = ollama_config.get("no_think", False)
         self.max_tokens = ollama_config.get("max_tokens", 4096)
+        self.temperature = ollama_config.get("temperature", 0.8)
+        self.top_p = ollama_config.get("top_p", 0.9)
+        self.top_k = ollama_config.get("top_k", 40)
+        self.repeat_penalty = ollama_config.get("repeat_penalty", 1.1)
         self._client: ollama.Client | None = None
 
     def get_persona(self, persona_key: str | None = None) -> str:
@@ -85,6 +89,16 @@ class StyleTransformer:
         if self._client is None:
             self._client = ollama.Client(host=self.base_url, timeout=300)
         return self._client
+
+    def _build_options(self) -> dict:
+        """Build Ollama options dict from config."""
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "repeat_penalty": self.repeat_penalty,
+            "num_predict": self.max_tokens,
+        }
 
     # Language-aware prompt templates
     _PROMPTS = {
@@ -183,19 +197,30 @@ class StyleTransformer:
             return text
 
         client = self._get_client()
-        think_flag = not self.no_think
-        # When thinking is enabled, don't cap num_predict (thinking tokens count toward it)
-        options = {} if think_flag else {"num_predict": self.max_tokens}
+        kwargs = {}
+        if self.no_think:
+            kwargs["think"] = False
         response = client.chat(
             model=self.model,
             messages=self._build_messages(text, style_prompt, persona, language),
-            options=options,
-            think=think_flag,
+            options=self._build_options(),
+            **kwargs,
         )
 
         content = response["message"]["content"].strip()
-        # Safety net: strip <think>…</think> blocks if they leak into content
-        content = re.sub(r"<think>[\s\S]*?</think>", "", content).strip()
+        # Strip thinking blocks from various models (<think>, <thought>, etc.)
+        content = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", content).strip()
+        # Handle cases where only closing tag remains (opening tag was in earlier content)
+        content = re.sub(r"^[\s\S]*?</(?:think|thought)>\s*", "", content).strip()
+        # Strip "Output:" prefix some models add after thinking
+        content = re.sub(r"^Output:\s*", "", content).strip()
+        # Fallback: if content is empty but thinking produced output, extract from thinking
+        if not content:
+            thinking = getattr(response.message, "thinking", "") or response["message"].get("thinking", "")
+            if thinking:
+                thinking = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", thinking).strip()
+                thinking = re.sub(r"^Output:\s*", "", thinking).strip()
+                content = thinking
         return content
 
     def transform_stream(
@@ -218,33 +243,21 @@ class StyleTransformer:
             return
 
         client = self._get_client()
-        think_flag = not self.no_think
-        options = {} if think_flag else {"num_predict": self.max_tokens}
+        kwargs = {}
+        if self.no_think:
+            kwargs["think"] = False
         stream = client.chat(
             model=self.model,
             messages=self._build_messages(text, style_prompt, persona, language),
             stream=True,
-            options=options,
-            think=think_flag,
+            options=self._build_options(),
+            **kwargs,
         )
 
-        in_think = False
         for chunk in stream:
             content = chunk["message"]["content"]
-            if not content:
-                continue
-            # Filter out <think>…</think> blocks from streaming output
-            if "<think>" in content:
-                in_think = True
-            if in_think:
-                if "</think>" in content:
-                    # Emit only text after </think>
-                    after = content.split("</think>", 1)[1]
-                    in_think = False
-                    if after:
-                        yield after
-                continue
-            yield content
+            if content:
+                yield content
 
     def check_connection(self) -> bool:
         """Check if Ollama server is accessible and model is available."""

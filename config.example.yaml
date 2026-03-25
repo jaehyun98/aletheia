@@ -7,6 +7,10 @@ ollama:
   base_url: http://localhost:11434
   no_think: true
   max_tokens: 4096
+  temperature: 0.8    # 0.0=deterministic, 1.0+=creative
+  top_p: 0.9          # nucleus sampling threshold
+  top_k: 40           # top-k sampling
+  repeat_penalty: 1.1 # repetition penalty (1.0=off)
 
 filter:
   enabled: true
