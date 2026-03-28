@@ -12,7 +12,7 @@ from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 from .pipeline import AletheiaPipeline
-from .printing import print_file
+from .printing import print_file, print_text, print_positioned_text
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,12 @@ class FolderWatcher:
         printer_name: str | None = None,
         paper_size: str = "",
         landscape: bool = False,
-        font_size: int = 12,
-        font_name: str = "Malgun Gothic",
+        font_size_ko: int = 12,
+        font_size_en: int = 12,
+        font_name_ko: str = "Malgun Gothic",
+        font_name_en: str = "Arial",
+        layout: dict | None = None,
+        margin_lr: int = 60,
     ):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
@@ -50,8 +54,16 @@ class FolderWatcher:
         self.printer_name = printer_name
         self.paper_size = paper_size
         self.landscape = landscape
-        self.font_size = font_size
-        self.font_name = font_name
+        self.font_size_ko = font_size_ko
+        self.font_size_en = font_size_en
+        self.font_name_ko = font_name_ko
+        self.font_name_en = font_name_en
+        self.layout = layout
+        self.margin_lr = margin_lr
+
+        self.backup_input_dir = self.output_dir / "backup" / "input"
+        self.backup_output_dir = self.output_dir / "backup" / "output"
+        self._backup_index: int = 0
 
         self.queue: Queue[Path] = Queue()
         self._stop_event = Event()
@@ -85,6 +97,13 @@ class FolderWatcher:
         self.input_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.done_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_input_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Scan existing backup files to resume index
+        existing = [int(f.stem) for d in (self.backup_input_dir, self.backup_output_dir)
+                     for f in d.glob("*.txt") if f.stem.isdigit()]
+        self._backup_index = max(existing) if existing else 0
 
         # Mark files already present at startup as known (skip processing)
         _audio_globs = ["*.[wW][aA][vV]", "*.[mM][pP]3"]
@@ -242,9 +261,40 @@ class FolderWatcher:
             logger.info("Output: %s", output_path.name)
             self._log(f"Output: {output_path.name}")
 
-            # Auto-print if enabled
+            # Backup input/output pair
+            try:
+                self._backup_index += 1
+                idx = f"{self._backup_index:04d}"
+                self.backup_input_dir.joinpath(f"{idx}.txt").write_text(
+                    result.original_text or "", encoding="utf-8")
+                self.backup_output_dir.joinpath(f"{idx}.txt").write_text(
+                    result.transformed_text or "", encoding="utf-8")
+                self._log(f"Backup: {idx}")
+            except Exception as backup_err:
+                logger.warning("Backup failed for index %s: %s", self._backup_index, backup_err)
+                self._log(f"Backup failed: {backup_err}")
+
+            # Auto-print if enabled (input + output together)
             if self.auto_print and self.printer_name:
-                if print_file(output_path, self.printer_name, self.paper_size, self.landscape, self.font_size, self.font_name):
+                input_text = result.original_text or ""
+                output_text = result.transformed_text or ""
+                lang = getattr(result, "language", "ko")
+                font = self.font_name_ko if lang == "ko" else self.font_name_en
+                fs = self.font_size_ko if lang == "ko" else self.font_size_en
+                if self.layout:
+                    printed = print_positioned_text(
+                        input_text, output_text, self.printer_name,
+                        paper_size=self.paper_size, landscape=self.landscape,
+                        font_size=fs, font_name=font,
+                        input_y_pct=self.layout.get("input_y_pct", 10.0),
+                        output_y_pct=self.layout.get("output_y_pct", 55.0),
+                        draw_separator=self.layout.get("separator", True),
+                        margin_lr=self.margin_lr,
+                    )
+                else:
+                    print_content = f"{input_text}\n\n---\n\n{output_text}"
+                    printed = print_text(print_content, self.printer_name, self.paper_size, self.landscape, fs, font, margin_lr=self.margin_lr)
+                if printed:
                     logger.info("Printed: %s -> %s", output_path.name, self.printer_name)
                     self._log(f"Printed: {output_path.name} -> {self.printer_name}")
                 else:

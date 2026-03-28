@@ -155,8 +155,23 @@ Persona examples:
         printer_name = cfg.get("printing.printer_name", "")
         paper_size = cfg.get("printing.paper_size", "A4")
         landscape = cfg.get("printing.landscape", False)
-        font_size = cfg.get("printing.font_size", 12)
-        font_name = cfg.get("printing.font_name", "Malgun Gothic")
+        font_size_ko = cfg.get("printing.font_size_ko", cfg.get("printing.font_size", 12))
+        font_size_en = cfg.get("printing.font_size_en", cfg.get("printing.font_size", 12))
+        font_name_ko = cfg.get("printing.font_name_ko", cfg.get("printing.font_name", "Malgun Gothic"))
+        font_name_en = cfg.get("printing.font_name_en", cfg.get("printing.font_name", "Arial"))
+        margin_lr = cfg.get("printing.margin_lr", 60)
+
+        # Load layout config
+        layout_raw = cfg.get("printing.layout", {})
+        if layout_raw:
+            offset = float(layout_raw.get("offset_pct", 20.0))
+            layout = {
+                "input_y_pct": 50.0 - offset,
+                "output_y_pct": 50.0 + offset,
+                "separator": layout_raw.get("separator", True),
+            }
+        else:
+            layout = None
 
         # Use persona from CLI arg or default from config
         persona = args.persona or pipeline.style_transformer.default_persona_key or None
@@ -174,8 +189,12 @@ Persona examples:
             printer_name=printer_name if printer_name else None,
             paper_size=paper_size,
             landscape=landscape,
-            font_size=font_size,
-            font_name=font_name,
+            font_size_ko=font_size_ko,
+            font_size_en=font_size_en,
+            font_name_ko=font_name_ko,
+            font_name_en=font_name_en,
+            layout=layout,
+            margin_lr=margin_lr,
         )
         watcher.start()
         watcher.run_forever()

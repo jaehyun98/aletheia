@@ -127,8 +127,14 @@ printing:
   printer_name: ""
   paper_size: A4
   landscape: false
-  font_size: 12
-  font_name: Malgun Gothic
+  font_size_ko: 12
+  font_size_en: 12
+  font_name_ko: Malgun Gothic
+  font_name_en: Arial
+  margin_lr: 60
+  layout:
+    offset_pct: 20.0
+    separator: true
 
 audio:
   sample_rate: 16000

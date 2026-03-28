@@ -1,5 +1,6 @@
 """Configuration management for Aletheia."""
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -124,20 +125,23 @@ class Config:
 
 # Global config instance
 _config: Config | None = None
+_config_lock = threading.Lock()
 
 
 def get_config(config_path: str | Path | None = None) -> Config:
     """Get or create the global configuration instance."""
     global _config
-    if _config is None or config_path is not None:
-        _config = Config(config_path)
-    return _config
+    with _config_lock:
+        if _config is None or config_path is not None:
+            _config = Config(config_path)
+        return _config
 
 
 def reset_config() -> None:
     """Reset the global configuration instance to force reload."""
     global _config
-    _config = None
+    with _config_lock:
+        _config = None
 
 
 # Add cache_clear method to get_config for compatibility

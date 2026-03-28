@@ -49,12 +49,12 @@ class TextToSpeech:
             volume=self.volume,
         )
 
-        audio_data = b""
+        chunks = []
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
-                audio_data += chunk["data"]
+                chunks.append(chunk["data"])
 
-        return audio_data
+        return b"".join(chunks)
 
     def synthesize(self, text: str) -> bytes:
         """Synthesize text to MP3 audio bytes.

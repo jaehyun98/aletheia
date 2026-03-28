@@ -2,7 +2,6 @@
 
 import logging
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -14,7 +13,10 @@ import yaml
 
 from .config import get_config, CONFIG_PATH
 from .pipeline import AletheiaPipeline
-from .printing import list_windows_printers, list_windows_fonts, PAPER_SIZES
+from .printing import (
+    list_windows_printers, list_windows_fonts, print_text, print_positioned_text,
+    PAPER_SIZES, PAPER_DIMENSIONS,
+)
 from .watch import FolderWatcher
 
 logger = logging.getLogger(__name__)
@@ -160,17 +162,38 @@ def delete_persona(key: str) -> str:
     return f"[OK] '{name}' deleted"
 
 
+def _print_result(original: str, transformed: str, language: str | None):
+    """Print input+output text using saved print config. Returns True on success."""
+    _, printer_name, paper_size, landscape, font_size_ko, font_size_en, font_ko, font_en, margin_lr = load_print_config()
+    if not printer_name:
+        logger.warning("Print skipped – no printer configured")
+        return False
+    lang = language or "ko"
+    font = font_ko if lang == "ko" else font_en
+    fs = font_size_ko if lang == "ko" else font_size_en
+    layout = load_layout_config()
+    return print_positioned_text(
+        original, transformed, printer_name,
+        paper_size=paper_size, landscape=landscape,
+        font_size=fs, font_name=font,
+        input_y_pct=layout["input_y_pct"],
+        output_y_pct=layout["output_y_pct"],
+        draw_separator=layout["separator"],
+        margin_lr=margin_lr,
+    )
+
+
 def process_text_input(
     text: str,
     persona_choice: str,
     custom_persona: str,
     style_prompt: str,
     skip_filter: bool,
-    output_audio: bool,
-) -> tuple[str, str, str | None]:
+    auto_print: bool,
+) -> tuple[str, str]:
     """Process text input through pipeline."""
     if not text.strip():
-        return "", "", None
+        return "", ""
 
     p = get_pipeline()
     persona = custom_persona if persona_choice == "custom" else persona_choice
@@ -184,14 +207,10 @@ def process_text_input(
         speak=False,
     )
 
-    audio_path = None
-    if output_audio and result.transformed_text:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            audio_data = p.tts.synthesize(result.transformed_text)
-            f.write(audio_data)
-            audio_path = f.name
+    if auto_print and result.transformed_text:
+        _print_result(result.original_text, result.transformed_text, result.language)
 
-    return result.original_text, result.transformed_text, audio_path
+    return result.original_text, result.transformed_text
 
 
 def process_audio_input(
@@ -200,11 +219,11 @@ def process_audio_input(
     custom_persona: str,
     style_prompt: str,
     skip_filter: bool,
-    output_audio: bool,
-) -> tuple[str, str, str | None]:
+    auto_print: bool,
+) -> tuple[str, str]:
     """Process audio input through pipeline."""
     if not audio_path:
-        return "", "", None
+        return "", ""
 
     p = get_pipeline()
     persona = custom_persona if persona_choice == "custom" else persona_choice
@@ -218,14 +237,10 @@ def process_audio_input(
         speak=False,
     )
 
-    out_audio_path = None
-    if output_audio and result.transformed_text:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            audio_data = p.tts.synthesize(result.transformed_text)
-            f.write(audio_data)
-            out_audio_path = f.name
+    if auto_print and result.transformed_text:
+        _print_result(result.original_text, result.transformed_text, result.language)
 
-    return result.original_text, result.transformed_text, out_audio_path
+    return result.original_text, result.transformed_text
 
 
 def check_services() -> str:
@@ -310,39 +325,227 @@ def save_watch_config(input_dir: str, output_dir: str, poll_interval: float) -> 
     return f"[OK] Watch paths saved (input: {input_dir.strip()}, output: {output_dir.strip()})"
 
 
-def load_print_config() -> tuple[bool, str, str, bool, int, str]:
+def load_print_config() -> tuple[bool, str, str, bool, int, int, str, str, int]:
     """Load printing settings from config."""
     config = load_config()
     printing = config.get("printing", {})
+    # Migrate legacy single font_name to font_name_ko
+    font_ko = printing.get("font_name_ko", printing.get("font_name", "Malgun Gothic"))
+    font_en = printing.get("font_name_en", "Arial")
+    # Migrate legacy single font_size to font_size_ko / font_size_en
+    font_size_ko = printing.get("font_size_ko", printing.get("font_size", 12))
+    font_size_en = printing.get("font_size_en", printing.get("font_size", 12))
     return (
         printing.get("auto_print", False),
         printing.get("printer_name", ""),
         printing.get("paper_size", "A4"),
         printing.get("landscape", False),
-        printing.get("font_size", 12),
-        printing.get("font_name", "Malgun Gothic"),
+        font_size_ko,
+        font_size_en,
+        font_ko,
+        font_en,
+        printing.get("margin_lr", 60),
     )
 
 
 def save_print_config(
     auto_print: bool, printer_name: str, paper_size: str,
-    landscape: bool = False, font_size: int = 12,
-    font_name: str = "Malgun Gothic",
+    landscape: bool = False,
+    font_size_ko: int = 12, font_size_en: int = 12,
+    font_name_ko: str = "Malgun Gothic",
+    font_name_en: str = "Arial",
+    margin_lr: int = 60,
 ) -> str:
     """Save printing settings to config."""
     config = load_config()
-    config["printing"] = {
+    if "printing" not in config:
+        config["printing"] = {}
+    config["printing"].update({
         "auto_print": bool(auto_print),
         "printer_name": printer_name.strip() if printer_name else "",
         "paper_size": paper_size.strip() if paper_size else "A4",
         "landscape": bool(landscape),
-        "font_size": int(font_size),
-        "font_name": font_name.strip() if font_name else "Malgun Gothic",
-    }
+        "font_size_ko": int(font_size_ko),
+        "font_size_en": int(font_size_en),
+        "font_name_ko": font_name_ko.strip() if font_name_ko else "Malgun Gothic",
+        "font_name_en": font_name_en.strip() if font_name_en else "Arial",
+        "margin_lr": int(margin_lr),
+    })
+    # Remove legacy single font_size key if present
+    config["printing"].pop("font_size", None)
     save_config(config)
     state = "ON" if auto_print else "OFF"
     orient = "Landscape" if landscape else "Portrait"
-    return f"[OK] Print settings saved (auto_print: {state}, printer: {printer_name or 'none'}, paper: {paper_size or 'A4'}, {orient}, {font_name} {font_size}pt)"
+    margin_mm = round(int(margin_lr) * 0.254, 1)
+    return f"[OK] Print settings saved (auto_print: {state}, printer: {printer_name or 'none'}, paper: {paper_size or 'A4'}, {orient}, margin: {margin_mm}mm, KO:{font_size_ko}pt EN:{font_size_en}pt)"
+
+
+def load_layout_config() -> dict:
+    """Load print layout settings from config."""
+    config = load_config()
+    layout = config.get("printing", {}).get("layout", {})
+    if "offset_pct" in layout:
+        offset = float(layout["offset_pct"])
+    elif "input_y_pct" in layout and "output_y_pct" in layout:
+        # Backward compat: compute offset from old format
+        offset = (float(layout["output_y_pct"]) - float(layout["input_y_pct"])) / 2.0
+    else:
+        offset = 20.0
+    return {
+        "offset_pct": offset,
+        "input_y_pct": 50.0 - offset,
+        "output_y_pct": 50.0 + offset,
+        "separator": bool(layout.get("separator", True)),
+    }
+
+
+def save_layout_config(offset_pct: float, separator: bool):
+    """Save print layout settings to config."""
+    config = load_config()
+    if "printing" not in config:
+        config["printing"] = {}
+    config["printing"]["layout"] = {
+        "offset_pct": float(offset_pct),
+        "separator": bool(separator),
+    }
+    save_config(config)
+
+
+def _build_layout_html(
+    paper_size: str, landscape: bool,
+    offset_pct: float, separator: bool,
+) -> str:
+    """Generate HTML for the print layout preview canvas."""
+    dims = PAPER_DIMENSIONS.get(paper_size, (827, 1169))
+    pw, ph = dims
+    if landscape:
+        pw, ph = ph, pw
+
+    aspect = pw / ph
+    max_h, max_w = 260, 350
+    if aspect >= 1:
+        canvas_w = min(max_w, int(max_h * aspect))
+        canvas_h = int(canvas_w / aspect)
+    else:
+        canvas_h = max_h
+        canvas_w = int(canvas_h * aspect)
+
+    input_y_pct = 50.0 - offset_pct
+    output_y_pct = 50.0 + offset_pct
+    sep_disp = "block" if separator else "none"
+    orient = "Landscape" if landscape else "Portrait"
+    dim_in = f'{pw / 100:.1f}" x {ph / 100:.1f}"'
+
+    return (
+        '<div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0;">'
+        '<div style="font-size:11px;color:#888;">Drag blocks to adjust distance from center</div>'
+        f'<div id="layout-paper-ctn" style="position:relative;width:{canvas_w}px;height:{canvas_h}px;'
+        'background:#fff;border:2px solid #d1d5db;border-radius:2px;'
+        'box-shadow:0 1px 4px rgba(0,0,0,0.08);overflow:hidden;">'
+        # Center line (50%)
+        '<div style="position:absolute;left:0;width:100%;height:0;'
+        'border-top:1px dotted #e5e7eb;top:50%;z-index:0;pointer-events:none;"></div>'
+        # Input block
+        f'<div class="ldrag" data-b="i" style="position:absolute;left:8%;width:84%;height:28px;'
+        f'top:{input_y_pct}%;background:rgba(59,130,246,0.12);border:1.5px solid #3b82f6;'
+        'border-radius:3px;display:flex;align-items:center;justify-content:center;'
+        'cursor:ns-resize;font-size:11px;color:#2563eb;font-weight:500;'
+        'touch-action:none;z-index:2;user-select:none;">Input</div>'
+        # Separator
+        '<div class="lsep" style="position:absolute;left:15%;width:70%;height:0;'
+        f'border-top:1px dashed #9ca3af;top:50%;z-index:1;display:{sep_disp};'
+        'pointer-events:none;"></div>'
+        # Output block
+        f'<div class="ldrag" data-b="o" style="position:absolute;left:8%;width:84%;height:28px;'
+        f'top:{output_y_pct}%;background:rgba(34,197,94,0.12);border:1.5px solid #22c55e;'
+        'border-radius:3px;display:flex;align-items:center;justify-content:center;'
+        'cursor:ns-resize;font-size:11px;color:#16a34a;font-weight:500;'
+        'touch-action:none;z-index:2;user-select:none;">Output</div>'
+        '</div>'
+        f'<div style="font-size:10px;color:#aaa;">{paper_size} {orient} ({dim_in})</div>'
+        '</div>'
+    )
+
+
+# JavaScript for symmetric drag interaction on the layout canvas.
+# Dragging one block mirrors the other around 50% center.
+_LAYOUT_DRAG_JS = """() => {
+    function _setSlider(id, v) {
+        const sc = document.getElementById(id);
+        if (!sc) return;
+        const ri = sc.querySelector('input[type=\"range\"]');
+        const ni = sc.querySelector('input[type=\"number\"]');
+        if (ri) {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(ri, v);
+            ri.dispatchEvent(new Event('input', {bubbles:true}));
+        }
+        if (ni) {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(ni, v);
+            ni.dispatchEvent(new Event('input', {bubbles:true}));
+        }
+    }
+    function _commitSlider(id, v) {
+        const sc = document.getElementById(id);
+        if (!sc) return;
+        const ri = sc.querySelector('input[type=\"range\"]');
+        const ni = sc.querySelector('input[type=\"number\"]');
+        if (ri) { ri.dispatchEvent(new Event('change', {bubbles:true})); }
+        if (ni) { ni.dispatchEvent(new Event('change', {bubbles:true})); }
+    }
+    function setupLayoutDrag() {
+        const p = document.querySelector('#layout-paper-ctn');
+        if (!p || p._dragReady) return;
+        p._dragReady = true;
+        let dE = null, sY = 0, sP = 0;
+        p.querySelectorAll('.ldrag').forEach(el => {
+            el.addEventListener('pointerdown', e => {
+                dE = el; sY = e.clientY; sP = parseFloat(el.style.top);
+                el.setPointerCapture(e.pointerId); e.preventDefault();
+            });
+            el.addEventListener('pointermove', e => {
+                if (dE !== el) return;
+                const isInput = el.dataset.b === 'i';
+                let np = sP + ((e.clientY - sY) / p.offsetHeight) * 100;
+                // Clamp: input stays above center (5-50), output stays below (50-95)
+                if (isInput) np = Math.max(5, Math.min(50, np));
+                else np = Math.max(50, Math.min(95, np));
+                el.style.top = np + '%';
+                // Mirror the other block around 50%
+                const other = p.querySelector(isInput ? '[data-b=\"o\"]' : '[data-b=\"i\"]');
+                if (other) other.style.top = (100 - np) + '%';
+                // Update offset slider
+                const offset = isInput ? (50 - np) : (np - 50);
+                _setSlider('layout-offset-slider', Math.max(0, Math.round(offset)));
+            });
+            el.addEventListener('pointerup', e => {
+                if (dE === el) {
+                    const isInput = el.dataset.b === 'i';
+                    const np = parseFloat(el.style.top);
+                    const offset = isInput ? (50 - np) : (np - 50);
+                    _setSlider('layout-offset-slider', Math.max(0, Math.round(offset)));
+                    _commitSlider('layout-offset-slider', Math.max(0, Math.round(offset)));
+                    dE = null; el.releasePointerCapture(e.pointerId);
+                }
+            });
+        });
+    }
+    new MutationObserver(() => setupLayoutDrag()).observe(document.body, {childList:true, subtree:true});
+    setupLayoutDrag();
+}"""
+
+# Client-side JS: when offset slider changes, move both blocks symmetrically
+_SLIDER_JS_OFFSET = """(v) => {
+    const iE = document.querySelector('#layout-paper-ctn [data-b=\"i\"]');
+    const oE = document.querySelector('#layout-paper-ctn [data-b=\"o\"]');
+    if (iE) iE.style.top = (50 - v) + '%';
+    if (oE) oE.style.top = (50 + v) + '%';
+}"""
+
+# Client-side JS: when separator checkbox changes, show/hide line
+_SEP_TOGGLE_JS = """(v) => {
+    const sE = document.querySelector('#layout-paper-ctn .lsep');
+    if (sE) sE.style.display = v ? 'block' : 'none';
+}"""
 
 
 def toggle_no_think(enabled: bool) -> str:
@@ -418,8 +621,12 @@ def start_watch(
     printer_name: str = "",
     paper_size: str = "",
     landscape: bool = False,
-    font_size: int = 12,
-    font_name: str = "Malgun Gothic",
+    font_size_ko: int = 12,
+    font_size_en: int = 12,
+    font_name_ko: str = "Malgun Gothic",
+    font_name_en: str = "Arial",
+    layout: dict | None = None,
+    margin_lr: int = 60,
 ) -> tuple[str, str]:
     """Start the folder watcher from GUI."""
     global _watcher, _watcher_log_since
@@ -440,8 +647,12 @@ def start_watch(
         printer_name=printer_name if printer_name else None,
         paper_size=paper_size if paper_size else "",
         landscape=bool(landscape),
-        font_size=int(font_size),
-        font_name=font_name if font_name else "Malgun Gothic",
+        font_size_ko=int(font_size_ko),
+        font_size_en=int(font_size_en),
+        font_name_ko=font_name_ko if font_name_ko else "Malgun Gothic",
+        font_name_en=font_name_en if font_name_en else "Arial",
+        layout=layout,
+        margin_lr=int(margin_lr),
     )
     _watcher.start()
     return "Running", "[OK] Watch mode started"
@@ -560,9 +771,10 @@ def create_ui() -> gr.Blocks:
                             value=False,
                         )
 
-                        output_audio = gr.Checkbox(
-                            label="Generate Audio Output",
-                            value=True,
+                        transform_auto_print = gr.Checkbox(
+                            label="Auto-Print (Input + Output)",
+                            value=False,
+                            info="Print input and output together after transform",
                         )
 
                         with gr.Accordion("Service Status", open=False):
@@ -588,8 +800,6 @@ def create_ui() -> gr.Blocks:
                                     text_original = gr.Textbox(label="Original", interactive=False)
                                     text_transformed = gr.Textbox(label="Transformed", interactive=False)
 
-                                text_audio_output = gr.Audio(label="Audio Output", type="filepath")
-
                             with gr.TabItem("Audio Input"):
                                 audio_input = gr.Audio(
                                     label="Record or Upload Audio",
@@ -601,8 +811,6 @@ def create_ui() -> gr.Blocks:
                                 with gr.Row():
                                     audio_original = gr.Textbox(label="Transcribed", interactive=False)
                                     audio_transformed = gr.Textbox(label="Transformed", interactive=False)
-
-                                audio_audio_output = gr.Audio(label="Audio Output", type="filepath")
 
             # Persona management tab
             with gr.TabItem("Personas"):
@@ -840,57 +1048,108 @@ def create_ui() -> gr.Blocks:
                                 "Set as Output Dir", variant="primary",
                             )
 
-                    # Nested: Print Settings
-                    with gr.Accordion("Print Settings", open=False):
-                        print_auto, print_printer, print_paper, print_landscape, print_font_size, print_font_name = load_print_config()
-                        printer_choices = list_windows_printers()
-
-                        with gr.Row():
-                            watch_auto_print = gr.Checkbox(
-                                label="Auto-Print Output",
-                                value=print_auto,
-                                info="Automatically print output files",
-                            )
-                            watch_printer = gr.Dropdown(
-                                choices=printer_choices,
-                                value=print_printer if print_printer in printer_choices else None,
-                                label="Printer",
-                                info="Select Windows printer",
-                            )
-                            watch_paper_size = gr.Dropdown(
-                                choices=PAPER_SIZES,
-                                value=print_paper if print_paper in PAPER_SIZES else "A4",
-                                label="Paper Size",
-                                info="Select paper size for printing",
-                            )
-                            watch_refresh_printers = gr.Button("Refresh", size="sm")
-
-                        with gr.Row():
-                            watch_landscape = gr.Checkbox(
-                                label="Landscape",
-                                value=print_landscape,
-                                info="Print in landscape orientation",
-                            )
-                            watch_font_size = gr.Slider(
-                                label="Font Size (pt)",
-                                value=print_font_size,
-                                minimum=6,
-                                maximum=48,
-                                step=1,
-                                info="Font size for printing",
-                            )
-                        font_choices = list_windows_fonts()
-                        watch_font_name = gr.Dropdown(
-                            choices=font_choices,
-                            value=print_font_name if print_font_name in font_choices else "Malgun Gothic",
-                            label="Font",
-                            info="Select font for printing",
-                            allow_custom_value=True,
-                        )
-
                     with gr.Row():
                         watch_save_btn = gr.Button("Save Settings", variant="primary")
                         watch_status = gr.Textbox(label="Status", interactive=False)
+
+                # --- Print Settings Accordion (independent) ---
+                with gr.Accordion("Print Settings", open=False):
+                    print_auto, print_printer, print_paper, print_landscape, print_font_size_ko, print_font_size_en, print_font_ko, print_font_en, print_margin_lr = load_print_config()
+                    printer_choices = list_windows_printers()
+
+                    with gr.Row():
+                        watch_auto_print = gr.Checkbox(
+                            label="Auto-Print Output",
+                            value=print_auto,
+                            info="Automatically print output files",
+                        )
+                        watch_printer = gr.Dropdown(
+                            choices=printer_choices,
+                            value=print_printer if print_printer in printer_choices else None,
+                            label="Printer",
+                            info="Select Windows printer",
+                        )
+                        watch_paper_size = gr.Dropdown(
+                            choices=PAPER_SIZES,
+                            value=print_paper if print_paper in PAPER_SIZES else "A4",
+                            label="Paper Size",
+                            info="Select paper size for printing",
+                        )
+                        watch_refresh_printers = gr.Button("Refresh", size="sm")
+
+                    with gr.Row():
+                        watch_landscape = gr.Checkbox(
+                            label="Landscape",
+                            value=print_landscape,
+                            info="Print in landscape orientation",
+                        )
+                        watch_font_size_ko = gr.Slider(
+                            label="Font Size KO (pt)",
+                            value=print_font_size_ko,
+                            minimum=6,
+                            maximum=48,
+                            step=1,
+                            info="Font size for Korean printing",
+                        )
+                        watch_font_size_en = gr.Slider(
+                            label="Font Size EN (pt)",
+                            value=print_font_size_en,
+                            minimum=6,
+                            maximum=48,
+                            step=1,
+                            info="Font size for English printing",
+                        )
+                        watch_margin_lr = gr.Slider(
+                            label="L/R Margin (1/100 in)",
+                            value=print_margin_lr,
+                            minimum=0,
+                            maximum=150,
+                            step=5,
+                            info="Left/Right margin (60=15mm, 100=25mm)",
+                        )
+                    font_choices = list_windows_fonts()
+                    with gr.Row():
+                        watch_font_name_ko = gr.Dropdown(
+                            choices=font_choices,
+                            value=print_font_ko if print_font_ko in font_choices else "Malgun Gothic",
+                            label="Korean Font",
+                            info="Font for Korean input",
+                            allow_custom_value=True,
+                        )
+                        watch_font_name_en = gr.Dropdown(
+                            choices=font_choices,
+                            value=print_font_en if print_font_en in font_choices else "Arial",
+                            label="English Font",
+                            info="Font for English input",
+                            allow_custom_value=True,
+                        )
+
+                    with gr.Accordion("Print Layout", open=False):
+                        _layout_cfg = load_layout_config()
+                        layout_canvas = gr.HTML(
+                            value=_build_layout_html(
+                                print_paper if print_paper in PAPER_SIZES else "A4",
+                                print_landscape,
+                                _layout_cfg["offset_pct"],
+                                _layout_cfg["separator"],
+                            ),
+                        )
+                        layout_offset = gr.Slider(
+                            label="Offset from Center (%)",
+                            value=_layout_cfg["offset_pct"],
+                            minimum=0, maximum=45, step=1,
+                            elem_id="layout-offset-slider",
+                            info="Distance of Input/Output blocks from page center",
+                        )
+                        layout_separator = gr.Checkbox(
+                            label="Draw Separator Line",
+                            value=_layout_cfg["separator"],
+                            info="Draw a line between input and output blocks",
+                        )
+
+                    with gr.Row():
+                        print_save_btn = gr.Button("Save Print Settings", variant="primary")
+                        print_status = gr.Textbox(label="Status", interactive=False)
 
                 # --- Restart ---
                 with gr.Accordion("Application", open=False):
@@ -912,14 +1171,14 @@ def create_ui() -> gr.Blocks:
 
         text_submit.click(
             process_text_input,
-            inputs=[text_input, persona_dropdown, custom_persona, style_prompt, skip_filter, output_audio],
-            outputs=[text_original, text_transformed, text_audio_output],
+            inputs=[text_input, persona_dropdown, custom_persona, style_prompt, skip_filter, transform_auto_print],
+            outputs=[text_original, text_transformed],
         )
 
         audio_submit.click(
             process_audio_input,
-            inputs=[audio_input, persona_dropdown, custom_persona, style_prompt, skip_filter, output_audio],
-            outputs=[audio_original, audio_transformed, audio_audio_output],
+            inputs=[audio_input, persona_dropdown, custom_persona, style_prompt, skip_filter, transform_auto_print],
+            outputs=[audio_original, audio_transformed],
         )
 
         # Persona management handlers
@@ -1076,43 +1335,85 @@ def create_ui() -> gr.Blocks:
         )
 
         # Watch mode handlers
-        def on_watch_save(input_dir, output_dir, poll_interval, auto_print, printer_name, paper_size, landscape, font_size, font_name):
+        def on_watch_save(input_dir, output_dir, poll_interval):
             watch_msg = save_watch_config(input_dir, output_dir, poll_interval)
-            print_msg = save_print_config(auto_print, printer_name, paper_size, landscape, int(font_size), font_name)
+            return watch_msg
+
+        watch_save_btn.click(
+            on_watch_save,
+            inputs=[watch_input, watch_output, watch_poll_interval],
+            outputs=[watch_status],
+        )
+
+        # Print settings handlers
+        def on_print_save(auto_print, printer_name, paper_size, landscape, font_size_ko, font_size_en, font_name_ko, font_name_en, margin_lr, ly_offset, ly_sep):
+            print_msg = save_print_config(auto_print, printer_name, paper_size, landscape, int(font_size_ko), int(font_size_en), font_name_ko, font_name_en, int(margin_lr))
+            offset = float(ly_offset)
+            save_layout_config(offset, bool(ly_sep))
             # Update running watcher's print settings in real-time
             if _watcher is not None and _watcher.is_running:
                 _watcher.auto_print = bool(auto_print)
                 _watcher.printer_name = printer_name if printer_name else None
                 _watcher.paper_size = paper_size if paper_size else ""
                 _watcher.landscape = bool(landscape)
-                _watcher.font_size = int(font_size)
-                _watcher.font_name = font_name if font_name else "Malgun Gothic"
+                _watcher.font_size_ko = int(font_size_ko)
+                _watcher.font_size_en = int(font_size_en)
+                _watcher.font_name_ko = font_name_ko if font_name_ko else "Malgun Gothic"
+                _watcher.font_name_en = font_name_en if font_name_en else "Arial"
+                _watcher.margin_lr = int(margin_lr)
+                _watcher.layout = {
+                    "input_y_pct": 50.0 - offset,
+                    "output_y_pct": 50.0 + offset,
+                    "separator": bool(ly_sep),
+                }
                 print_msg += " (applied to running watcher)"
-            return f"{watch_msg}\n{print_msg}"
+            return f"{print_msg}\n[OK] Layout saved (offset={ly_offset}%)"
 
-        watch_save_btn.click(
-            on_watch_save,
-            inputs=[watch_input, watch_output, watch_poll_interval, watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size, watch_font_name],
-            outputs=[watch_status],
+        # JS preprocessor: read offset from canvas block positions
+        _PRINT_SAVE_JS = """(...args) => {
+            const iE = document.querySelector('#layout-paper-ctn [data-b=\"i\"]');
+            if (iE) args[9] = Math.max(0, Math.round(50 - parseFloat(iE.style.top)));
+            const sE = document.querySelector('#layout-paper-ctn .lsep');
+            if (sE) args[10] = sE.style.display !== 'none';
+            return args;
+        }"""
+
+        print_save_btn.click(
+            on_print_save,
+            inputs=[watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size_ko, watch_font_size_en, watch_font_name_ko, watch_font_name_en, watch_margin_lr, layout_offset, layout_separator],
+            outputs=[print_status],
+            js=_PRINT_SAVE_JS,
         )
 
         # Refresh printers & fonts handler
         def _refresh_printers_and_fonts():
-            return gr.update(choices=list_windows_printers()), gr.update(choices=list_windows_fonts())
+            fonts = list_windows_fonts()
+            return gr.update(choices=list_windows_printers()), gr.update(choices=fonts), gr.update(choices=fonts)
 
         watch_refresh_printers.click(
             _refresh_printers_and_fonts,
-            outputs=[watch_printer, watch_font_name],
+            outputs=[watch_printer, watch_font_name_ko, watch_font_name_en],
         )
 
-        def on_watch_start(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, font_size, font_name):
-            status, msg = start_watch(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, int(font_size), font_name)
+        def on_watch_start(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, font_size_ko, font_size_en, font_name_ko, font_name_en, margin_lr, ly_offset, ly_sep):
+            offset = float(ly_offset)
+            layout = {"input_y_pct": 50.0 - offset, "output_y_pct": 50.0 + offset, "separator": bool(ly_sep)}
+            status, msg = start_watch(input_dir, output_dir, poll_interval, persona, auto_print, printer_name, paper_size, landscape, int(font_size_ko), int(font_size_en), font_name_ko, font_name_en, layout=layout, margin_lr=int(margin_lr))
             return status, msg, gr.update(active=True), "(none)", "(empty)"
+
+        _START_JS_PREPROCESS = """(...args) => {
+            const iE = document.querySelector('#layout-paper-ctn [data-b=\"i\"]');
+            if (iE) args[13] = Math.max(0, Math.round(50 - parseFloat(iE.style.top)));
+            const sE = document.querySelector('#layout-paper-ctn .lsep');
+            if (sE) args[14] = sE.style.display !== 'none';
+            return args;
+        }"""
 
         watch_start_btn.click(
             on_watch_start,
-            inputs=[watch_input, watch_output, watch_poll_interval, watch_persona, watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size, watch_font_name],
+            inputs=[watch_input, watch_output, watch_poll_interval, watch_persona, watch_auto_print, watch_printer, watch_paper_size, watch_landscape, watch_font_size_ko, watch_font_size_en, watch_font_name_ko, watch_font_name_en, watch_margin_lr, layout_offset, layout_separator],
             outputs=[watch_running_status, watch_status, watch_timer, queue_current_file, queue_pending_list],
+            js=_START_JS_PREPROCESS,
         )
 
         def on_watch_stop():
@@ -1190,6 +1491,26 @@ def create_ui() -> gr.Blocks:
             outputs=[watch_output, watch_status],
         )
 
+        # Layout canvas handlers
+        # Paper size or landscape changes → regenerate canvas HTML (aspect ratio changes)
+        def _update_layout_canvas(paper_size, landscape, offset, separator):
+            return _build_layout_html(paper_size or "A4", bool(landscape), float(offset), bool(separator))
+
+        watch_paper_size.change(
+            _update_layout_canvas,
+            inputs=[watch_paper_size, watch_landscape, layout_offset, layout_separator],
+            outputs=[layout_canvas],
+        )
+        watch_landscape.change(
+            _update_layout_canvas,
+            inputs=[watch_paper_size, watch_landscape, layout_offset, layout_separator],
+            outputs=[layout_canvas],
+        )
+
+        # Slider / checkbox changes → client-side JS only (no server round-trip)
+        layout_offset.change(fn=None, inputs=[layout_offset], js=_SLIDER_JS_OFFSET)
+        layout_separator.change(fn=None, inputs=[layout_separator], js=_SEP_TOGGLE_JS)
+
         # Reload config (no restart)
         def on_reload_config():
             reload_pipeline()
@@ -1223,28 +1544,47 @@ def create_ui() -> gr.Blocks:
         # Auto-start watch mode on GUI load
         def _auto_start_watch():
             input_dir, output_dir, poll_interval = load_watch_config()
-            print_auto, print_printer, print_paper, print_land, print_fs, print_fn = load_print_config()
+            print_auto, print_printer, print_paper, print_land, print_fs_ko, print_fs_en, print_fn_ko, print_fn_en, print_mlr = load_print_config()
+            layout = load_layout_config()
             persona = get_pipeline().style_transformer.default_persona_key
             status, msg = start_watch(
                 input_dir, output_dir, poll_interval, persona,
-                print_auto, print_printer, print_paper, print_land, print_fs, print_fn,
+                print_auto, print_printer, print_paper, print_land, print_fs_ko, print_fs_en, print_fn_ko, print_fn_en,
+                layout=layout, margin_lr=print_mlr,
             )
             return status, msg, gr.update(active=True), "(none)", "(empty)"
 
         app.load(
             _auto_start_watch,
             outputs=[watch_running_status, watch_status, watch_timer, queue_current_file, queue_pending_list],
+            js=_LAYOUT_DRAG_JS,
         )
 
     return app
 
 
+def _find_available_port() -> int:
+    """Find a port that Windows actually allows binding to."""
+    import socket
+    for port in range(7860, 8100):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(("127.0.0.1", port))
+            s.close()
+            return port
+        except OSError:
+            continue
+    raise RuntimeError("No available port found in range 7860-8099")
+
+
 def main():
     """Launch GUI."""
+    port = _find_available_port()
+    print(f"Using port {port}")
     app = create_ui()
     app.launch(
         server_name="127.0.0.1",
-        server_port=7860,
+        server_port=port,
         share=False,
     )
 
